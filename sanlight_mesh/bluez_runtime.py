@@ -43,6 +43,13 @@ from .protocol import (
     validate_uptime_seconds,
 )
 from .sequence_recovery import MESH_SEQUENCE_MAX, RECOVERY_TARGET_MAX
+from .set_max_policy import (
+    SET_MAX_RETRY_DELAY_SECONDS,
+    SET_MAX_STATUS_TIMEOUT_SECONDS,
+    SET_MAX_UNCONFIRMED_EXIT_CODE,
+    max_attempts_for_destination,
+    set_max_status_rejection_reason,
+)
 from .state import (
     StateError,
     read_state,
@@ -310,8 +317,30 @@ class SenderElement(dbus.service.Object):
         )
 
         if is_set_max_brightness_status(payload):
-            self.runtime.remote_status_seen = True
-            print("Received SANlight SetMaxBrightness status (vendor opcode 0x07).")
+            if self.runtime.args.command != "set-max":
+                print(
+                    "Ignoring SANlight SetMaxBrightness status because no "
+                    "set-max transaction is active."
+                )
+                return
+            try:
+                response_destination = int(destination)
+            except (TypeError, ValueError):
+                response_destination = None
+            reason = set_max_status_rejection_reason(
+                source=source_int,
+                key_index=int(key_index),
+                response_destination=response_destination,
+                requested_destination=self.runtime.args.destination,
+                expected_app_index=self.runtime.control.app_index,
+                sender_unicast=self.runtime.sender_unicast,
+                node_addresses=self.runtime.control.sanlight_nodes,
+                group_addresses=self.runtime.control.groups,
+            )
+            if reason is not None:
+                print(f"Ignoring unrelated SANlight 0x07 status: {reason}.")
+                return
+            self.runtime.on_set_max_status(source_int)
             return
 
         if is_set_uptime_status(payload):
@@ -411,6 +440,9 @@ class BluezRuntime:
         self.ttl_requested = False
         self.ttl_confirmed = False
         self.remote_status_seen = False
+        self.set_max_attempt = 0
+        self.set_max_max_attempts = 0
+        self.set_max_status_sources: set[int] = set()
         self.network_transmit_status: tuple[int, int, int, int] | None = None
         self.live_status: tuple[int, bytes] | None = None
         self.live_attempt = 0
@@ -1191,11 +1223,19 @@ class BluezRuntime:
         if self.sender_node is None:
             self.fail("Canonical sender Node1 interface is unavailable")
             return
+        if self.set_max_max_attempts == 0:
+            self.set_max_max_attempts = max_attempts_for_destination(
+                self.args.destination,
+                self.control.sanlight_nodes,
+            )
+        self.set_max_attempt += 1
+        attempt = self.set_max_attempt
         # Defensive second validation remains inside the PDU builder.
         payload = build_set_max_brightness_pdu(self.args.percent)
         description = validate_destination(self.control, self.args.destination)
         print(
-            f"Sending SetMaxBrightness {self.args.percent}% to "
+            f"Sending SetMaxBrightness {self.args.percent}% attempt "
+            f"{attempt}/{self.set_max_max_attempts} to "
             f"0x{self.args.destination:04X} ({description}); PDU={payload.hex()}"
         )
         self.sender_node.Send(
@@ -1204,21 +1244,88 @@ class BluezRuntime:
             dbus.UInt16(self.control.app_index),
             empty_options(),
             byte_array(payload),
-            reply_handler=self.on_send_accepted,
-            error_handler=lambda error: self.fail(f"Canonical sender Node1.Send failed: {error}"),
+            reply_handler=lambda current_attempt=attempt: self.on_set_max_send_accepted(
+                current_attempt
+            ),
+            error_handler=lambda error: self.fail(
+                f"Canonical sender Node1.Send failed: {error}"
+            ),
         )
 
-    def on_send_accepted(self) -> None:
-        print("Access message accepted for Mesh transmission.")
-        self.timeout(4, self.finish_send_window)
-
-    def finish_send_window(self) -> None:
-        suffix = (
-            " SANlight 0x07 status received."
-            if self.remote_status_seen
-            else " No SANlight 0x07 status observed during the 4-second window."
+    def on_set_max_send_accepted(self, attempt: int) -> None:
+        if self.finished:
+            return
+        print(
+            "Access message accepted for Mesh transmission "
+            f"(attempt {attempt}/{self.set_max_max_attempts})."
         )
-        self.finish("SEND COMPLETE." + suffix)
+        self.timeout(
+            SET_MAX_STATUS_TIMEOUT_SECONDS,
+            lambda current_attempt=attempt: self.finish_or_retry_set_max(
+                current_attempt
+            ),
+        )
+
+    def on_set_max_status(self, source: int) -> None:
+        if self.finished:
+            return
+        self.set_max_status_sources.add(source)
+        print(
+            "Received matching SANlight SetMaxBrightness status "
+            f"(vendor opcode 0x07) from 0x{source:04X}."
+        )
+        if self.args.destination in self.control.sanlight_nodes:
+            self.finish(
+                "SET-MAX CONFIRMED. Matching SANlight 0x07 status received "
+                f"from 0x{source:04X} after attempt {self.set_max_attempt}/"
+                f"{self.set_max_max_attempts}."
+            )
+
+    def finish_or_retry_set_max(self, attempt: int) -> None:
+        if self.finished or attempt != self.set_max_attempt:
+            return
+
+        if self.args.destination in self.control.groups:
+            sources = ", ".join(
+                f"0x{source:04X}" for source in sorted(self.set_max_status_sources)
+            ) or "none"
+            self.finish(
+                "SET-MAX GROUP SEND COMPLETE. The group command was transmitted "
+                f"once; matching status sources observed: {sources}. "
+                "A group response cannot confirm that every member applied the value."
+            )
+            return
+
+        if self.set_max_status_sources:
+            source = min(self.set_max_status_sources)
+            self.finish(
+                "SET-MAX CONFIRMED. Matching SANlight 0x07 status received "
+                f"from 0x{source:04X}."
+            )
+            return
+
+        if self.set_max_attempt < self.set_max_max_attempts:
+            print(
+                "No matching SANlight 0x07 status after "
+                f"{SET_MAX_STATUS_TIMEOUT_SECONDS} seconds. Retrying the same "
+                f"idempotent value in {SET_MAX_RETRY_DELAY_SECONDS} second."
+            )
+            self.timeout(SET_MAX_RETRY_DELAY_SECONDS, self.retry_set_max)
+            return
+
+        self.finish(
+            "SET-MAX UNCONFIRMED. BlueZ accepted "
+            f"{self.set_max_max_attempts} transmissions, but no matching SANlight "
+            f"0x07 status was received from 0x{self.args.destination:04X}. "
+            "The dimmer may still have applied the value; reconnect the SANlight "
+            "app to verify it.",
+            SET_MAX_UNCONFIRMED_EXIT_CODE,
+        )
+
+    def retry_set_max(self) -> None:
+        if self.finished or self.set_max_status_sources:
+            return
+        self.send_max_brightness()
 
     def start_leave_sender(self) -> None:
         state = self.load_sender_state()

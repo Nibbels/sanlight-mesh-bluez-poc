@@ -144,7 +144,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     set_max = commands.add_parser(
-        "set-max", help="set MaxBrightness; safety range is strictly 20..100"
+        "set-max",
+        help=(
+            "set MaxBrightness; safety range is strictly 20..100 and "
+            "unicast writes retry once when confirmation is lost"
+        ),
     )
     set_max.add_argument("destination", type=parse_destination)
     set_max.add_argument("percent", type=int)

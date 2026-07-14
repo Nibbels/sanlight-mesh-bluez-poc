@@ -128,6 +128,26 @@ sudo python3 sanlight_canonical_sender_poc.py \
     set-max <NODE_OR_GROUP_ADDRESS> 68
 ```
 
+For a unicast node, `set-max` waits up to four seconds for a matching SANlight
+`0x07` status. A status counts only when it uses AppKey 0, is addressed back to
+the canonical sender and comes from the exact requested node. Unrelated or late
+status traffic from another lamp cannot falsely confirm the command.
+
+When the first status is lost, the command waits one additional second and sends
+the **same value once more**. Setting the same MaxBrightness value is idempotent;
+the retry does not increment or scale the requested percentage. A matching status
+ends the command immediately.
+
+If BlueZ accepts both unicast transmissions but neither matching status arrives,
+the command exits with code `3` and reports `SET-MAX UNCONFIRMED`. This is not
+proof that the write failed: a lamp can apply the value even when its response is
+lost. Fully close and reconnect the SANlight app to refresh its cached display.
+Do not loop recovery writes merely because exit code `3` was returned.
+
+A Mesh group write is sent only once. Responses from individual group members
+cannot prove that every member applied the value, so group output is explicitly
+reported as group-wide unconfirmed even when one or more statuses are observed.
+
 Set one lamp clock to an explicit local clock value:
 
 ```bash

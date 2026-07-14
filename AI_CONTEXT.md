@@ -35,6 +35,14 @@ State writes must remain atomic. `.state/` is mode `0700`; JSON state files are 
 - MaxBrightness accepts only integer `20..100`.
 - `0`, `1..19`, negative values and values above `100` must be rejected before D-Bus.
 - `build_set_max_brightness_pdu()` must independently enforce the same range.
+- Unicast `set-max` may retry the exact same idempotent value once after a lost
+  status, but must never perform an unbounded retry loop.
+- A `0x07` status confirms unicast `set-max` only when source node, AppKey index
+  and response destination match the active transaction.
+- Two locally accepted sends without a matching status return exit code `3`
+  (`SET-MAX UNCONFIRMED`); this does not prove that the lamp rejected the write.
+- Group `set-max` is transmitted once because member responses cannot establish
+  group-wide confirmation.
 - `0xFFFF` is rejected.
 - Destinations must exist in the CDB.
 - `get-live`, `get-net-tx`, `set-time`, `set-uptime` and targeted `sync-now` require unicast nodes.
