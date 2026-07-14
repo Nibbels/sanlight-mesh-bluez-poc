@@ -113,18 +113,42 @@ In the original test installation, the CDB happened to contain:
 
 Those values are examples only.
 
+## Recommended first-time setup
+
+After copying `SANlightMesh.json` to `private/SANlightMesh.json`, the recommended first-time command is:
+
+```bash
+sudo bash ./scripts/setup-all.sh
+```
+
+Default behavior is a clean **local** reset:
+
+- clears `/var/lib/bluetooth/mesh/*`
+- removes `.sanlight-mesh-poc-*-state.json`
+- installs and starts `sanlight-meshd-generic.service`
+- runs the Python `setup`
+- prints detected node addresses
+
+This does not reset or unprovision the SANlight lamps. It only resets the Raspberry Pi's local BlueZ/Python import state and rebuilds it from `private/SANlightMesh.json`.
+
+Use the non-reset path only when you intentionally want to keep the current local BlueZ import state:
+
+```bash
+sudo bash ./scripts/setup-all.sh --keep-state
+```
+
 ## 6. Install and start the mesh daemon service
 
 For normal use, do not keep `bluetooth-meshd` running in a second terminal. Install it as a systemd service:
 
 ```bash
-sudo ./scripts/install-service.sh
+sudo bash ./scripts/install-service.sh
 ```
 
 For a fresh device or a deliberate development reset, also clear old BlueZ mesh state:
 
 ```bash
-sudo ./scripts/install-service.sh --reset-mesh-state
+sudo bash ./scripts/install-service.sh --reset-mesh-state
 ```
 
 What the script does:
@@ -138,6 +162,7 @@ What the script does:
 - does not put `hciconfig` or `btmgmt` into `ExecStartPre`, because these helpers can block under systemd
 - enables the service for reboot
 - checks whether `org.bluez.mesh` appears on D-Bus
+- when `--reset-mesh-state` is used, also removes `.sanlight-mesh-poc-*-state.json`
 
 Check service state:
 

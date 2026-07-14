@@ -15,18 +15,34 @@ The default/MGMT mesh I/O path was not reliable in the original tests: BlueZ rep
 
 `private/SANlightMesh.json` is exported from the SANlight smartphone app and contains Bluetooth Mesh secrets. Never commit it, publish it, or paste it into issues.
 
+## One-command first setup
+
+For a fresh Raspberry Pi after copying `private/SANlightMesh.json` into place:
+
+```bash
+sudo bash ./scripts/setup-all.sh
+```
+
+This resets only the **local Raspberry Pi / BlueZ PoC state**, installs and starts the systemd service, runs the SANlight mesh import/setup, and prints the detected lamp node addresses. It does not change lamp brightness or lamp time.
+
+For later service repair without resetting local mesh state:
+
+```bash
+sudo bash ./scripts/install-service.sh
+```
+
 ## Minimal service installation
 
 Install and start the BlueZ mesh daemon service. The installer resolves command paths such as `rfkill`, because their location can differ between distributions:
 
 ```bash
-sudo ./scripts/install-service.sh
+sudo bash ./scripts/install-service.sh
 ```
 
 For a fresh device or a deliberate development reset:
 
 ```bash
-sudo ./scripts/install-service.sh --reset-mesh-state
+sudo bash ./scripts/install-service.sh --reset-mesh-state
 ```
 
 Then run the CDB import/setup once:

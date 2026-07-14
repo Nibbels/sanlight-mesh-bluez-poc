@@ -146,8 +146,18 @@ if [[ "$RESET_MESH_STATE" -eq 1 ]]; then
   echo "Resetting BlueZ mesh state under ${MESH_DIR} ..."
   mkdir -p "$MESH_DIR"
   rm -rf "${MESH_DIR:?}/"*
+  echo "Removing local PoC state tokens under ${REPO_DIR} ..."
+  rm -f "${REPO_DIR}"/.sanlight-mesh-poc-*-state.json
 else
   echo "Keeping existing BlueZ mesh state under ${MESH_DIR}."
+  echo "Keeping existing local PoC state tokens under ${REPO_DIR}."
+fi
+
+if [[ ! -f "${REPO_DIR}/private/SANlightMesh.json" ]]; then
+  echo
+  echo "NOTE: ${REPO_DIR}/private/SANlightMesh.json does not exist yet."
+  echo "      Service installation can continue, but SANlight setup requires this file."
+  echo
 fi
 
 echo "Installing systemd service: ${SERVICE_FILE}"

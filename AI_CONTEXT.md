@@ -217,3 +217,21 @@ Do not put hciconfig or btmgmt into ExecStartPre for the productive service. On 
 ```text
 /usr/libexec/bluetooth/bluetooth-meshd --io generic:hci0 --nodetach
 ```
+
+
+## First-time setup semantics
+
+The recommended first-time setup path is now:
+
+```bash
+sudo bash ./scripts/setup-all.sh
+```
+
+It intentionally resets local Raspberry Pi state by default:
+
+- `/var/lib/bluetooth/mesh/*`
+- `.sanlight-mesh-poc-*-state.json`
+
+This is safe for the PoC because the SANlight network identity is rebuilt from `private/SANlightMesh.json`; it does not unprovision or reset the actual lamps. The script does not change brightness or lamp time.
+
+`--keep-state` exists for service repair / non-destructive reruns. `install-service.sh --reset-mesh-state` must also delete `.sanlight-mesh-poc-*-state.json`, otherwise BlueZ attach can fail with `org.bluez.mesh.Error.NotFound` after a local BlueZ state reset.
