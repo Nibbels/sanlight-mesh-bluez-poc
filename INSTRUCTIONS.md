@@ -113,9 +113,49 @@ In the original test installation, the CDB happened to contain:
 
 Those values are examples only.
 
-## 6. Prepare Bluetooth for manual test
+## 6. Install and start the mesh daemon service
 
-Stop the stock Bluetooth services so `bluetooth-meshd --io generic:hci0` can own the controller:
+For normal use, do not keep `bluetooth-meshd` running in a second terminal. Install it as a systemd service:
+
+```bash
+sudo ./scripts/install-service.sh
+```
+
+For a fresh device or a deliberate development reset, also clear old BlueZ mesh state:
+
+```bash
+sudo ./scripts/install-service.sh --reset-mesh-state
+```
+
+What the script does:
+
+- stops `bluetooth.service`, `bluetooth-mesh.service`, and old `bluetooth-meshd` processes
+- unblocks Bluetooth with `rfkill`
+- prepares `hci0`
+- installs `/etc/systemd/system/sanlight-meshd-generic.service`
+- starts `bluetooth-meshd --io generic:hci0 --nodetach`
+- enables the service for reboot
+- checks whether `org.bluez.mesh` appears on D-Bus
+
+Check service state:
+
+```bash
+systemctl status sanlight-meshd-generic.service
+busctl tree org.bluez.mesh
+journalctl -u sanlight-meshd-generic.service -f
+```
+
+Expected:
+
+```text
+/org/bluez/mesh
+```
+
+## 7. Manual daemon start, only for debugging
+
+The manual two-terminal mode is still useful when debugging BlueZ itself.
+
+Terminal 1:
 
 ```bash
 sudo systemctl stop bluetooth.service
@@ -127,34 +167,11 @@ sudo rfkill unblock bluetooth
 sudo rfkill unblock all
 sudo hciconfig hci0 down 2>/dev/null || true
 sudo btmgmt --index 0 power off 2>/dev/null || true
-rfkill list all
-```
 
-Bluetooth must show:
-
-```text
-Soft blocked: no
-Hard blocked: no
-```
-
-For a fresh import/reset only, remove previous local BlueZ mesh state:
-
-```bash
-sudo rm -rf /var/lib/bluetooth/mesh/*
-```
-
-Do not delete this state during normal operation unless you intend to re-run `setup`.
-
-## 7. Start BlueZ mesh daemon in the working mode
-
-Open Terminal 1:
-
-```bash
 sudo /usr/libexec/bluetooth/bluetooth-meshd \
   --io generic:hci0 \
   --nodetach \
-  --debug \
-  2>&1 | tee ~/meshd-sanlight-generic.log
+  --debug
 ```
 
 Expected useful log lines:
@@ -165,7 +182,7 @@ mesh_ready_callback
 Added Network Interface on /org/bluez/mesh
 ```
 
-Keep this terminal running.
+Keep this terminal running only for debug sessions.
 
 ## 8. Import/configure local mesh identities
 

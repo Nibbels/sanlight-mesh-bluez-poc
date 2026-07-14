@@ -190,3 +190,21 @@ No logs, APKs, screenshots, pycache, backups, or CDB files belong in the reposit
 - Add ioBroker integration or a simple local HTTP/MQTT bridge.
 - Decide whether to preserve the DECT200 midnight hard-reset as fallback or replace it with `sync-now`.
 - Add structured JSON output mode for automation consumers.
+
+
+## Service-first setup
+
+For productive usage, do not document the two-terminal `bluetooth-meshd` debug mode as the primary path. The primary path is:
+
+```bash
+sudo ./scripts/install-service.sh
+sudo python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json --iv-index 0 setup
+```
+
+The installer creates and starts `sanlight-meshd-generic.service`, using:
+
+```text
+/usr/libexec/bluetooth/bluetooth-meshd --io generic:hci0 --nodetach
+```
+
+Manual foreground daemon mode remains a debug fallback only.

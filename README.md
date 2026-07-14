@@ -13,7 +13,33 @@ The default/MGMT mesh I/O path was not reliable in the original tests: BlueZ rep
 
 ## Important
 
-`private/SANlightMesh.json` contains Bluetooth Mesh secrets. Never commit it, publish it, or paste it into issues.
+`private/SANlightMesh.json` is exported from the SANlight smartphone app and contains Bluetooth Mesh secrets. Never commit it, publish it, or paste it into issues.
+
+## Minimal service installation
+
+Install and start the BlueZ mesh daemon service:
+
+```bash
+sudo ./scripts/install-service.sh
+```
+
+For a fresh device or a deliberate development reset:
+
+```bash
+sudo ./scripts/install-service.sh --reset-mesh-state
+```
+
+Then run the CDB import/setup once:
+
+```bash
+sudo python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json --iv-index 0 setup
+```
+
+Check logs with:
+
+```bash
+journalctl -u sanlight-meshd-generic.service -f
+```
 
 ## Quick commands
 
