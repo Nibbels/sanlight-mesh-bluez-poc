@@ -13,13 +13,23 @@ git clone https://github.com/Nibbels/sanlight-mesh-bluez-poc.git
 cd sanlight-mesh-bluez-poc
 ```
 
-## 2. Copy the private SANlight CDB
+## 2. Export and copy the private SANlight CDB
 
-Copy the SANlight app export to:
+In the SANlight app, export the private Mesh file and then copy it to:
 
 ```text
 private/SANlightMesh.json
 ```
+
+Export path in the SANlight app:
+
+![How to export the private SANlightMesh.json from the SANlight app](docs/export_private_sanlightmesh_json_from_app.png)
+
+Summary:
+
+1. Open the menu and tap **Einstellungen** (**Settings**).
+2. In **Mesh Wartung**, tap **Mesh exportieren**.
+3. Copy the exported file to `private/SANlightMesh.json` in this repository.
 
 Then protect it:
 
@@ -28,7 +38,7 @@ chmod 700 private
 chmod 600 private/SANlightMesh.json
 ```
 
-Never commit or publish this file. It contains the Mesh keys and DeviceKeys.
+Never commit or publish this file. It contains private Mesh keys and DeviceKeys. Also never share BlueZ state tokens or files from `.state/` or `/var/lib/bluetooth/mesh`.
 
 ## 3. Run the complete setup
 
