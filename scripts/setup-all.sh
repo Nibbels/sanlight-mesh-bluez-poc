@@ -1,125 +1,118 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CDB="${REPO_DIR}/private/SANlightMesh.json"
-INSTALL_SERVICE="${REPO_DIR}/scripts/install-service.sh"
-PY="${PYTHON:-python3}"
+cd "$REPO_DIR"
+
+CDB="$REPO_DIR/private/SANlightMesh.json"
+IV_INDEX=""
+RESET_MESH_STATE=0
+SKIP_PACKAGES=0
+ALLOW_UNSUPPORTED=0
 
 usage() {
-  cat <<'USAGE'
-Run the complete first-time SANlight Mesh PoC setup.
-
-Usage:
-  sudo bash ./scripts/setup-all.sh [options]
+    cat <<USAGE
+Usage: sudo bash ./scripts/setup-all.sh [options]
 
 Options:
-  --keep-state      Do not reset BlueZ mesh state or local PoC state tokens.
-                    Default is a clean local reset, which is best for first setup.
-  --hci hci0        Bluetooth controller to use. Default: hci0
-  --help            Show this help.
+  --cdb PATH              private SANlight CDB (default: private/SANlightMesh.json)
+  --iv-index VALUE        verified Mesh IV Index; required when absent from CDB
+  --reset-mesh-state      explicitly clear local BlueZ/project state after preflight
+  --skip-packages         do not run apt update/install
+  --allow-unsupported     warn instead of failing outside the validated platform
+  -h, --help              show this help
 
-What this script does:
-  - checks that private/SANlightMesh.json exists
-  - checks Python syntax
-  - installs/starts sanlight-meshd-generic.service
-  - resets local BlueZ/Python state by default
-  - runs the Python mesh import/setup
-  - prints detected lamp nodes
-
-It does not change lamp brightness or lamp time.
+Setup configures local BlueZ identities only. It never changes lamp time or brightness.
 USAGE
 }
 
-RESET=1
-HCI="hci0"
-
 while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --keep-state)
-      RESET=0
-      shift
-      ;;
-    --hci)
-      HCI="${2:-}"
-      if [[ -z "$HCI" ]]; then
-        echo "ERROR: --hci requires a value, for example hci0" >&2
-        exit 2
-      fi
-      shift 2
-      ;;
-    --help|-h)
-      usage
-      exit 0
-      ;;
-    *)
-      echo "ERROR: Unknown argument: $1" >&2
-      usage
-      exit 2
-      ;;
-  esac
+    case "$1" in
+        --cdb) [[ $# -ge 2 ]] || { echo "--cdb needs a path" >&2; exit 2; }; CDB="$2"; shift ;;
+        --iv-index) [[ $# -ge 2 ]] || { echo "--iv-index needs a value" >&2; exit 2; }; IV_INDEX="$2"; shift ;;
+        --reset-mesh-state) RESET_MESH_STATE=1 ;;
+        --skip-packages) SKIP_PACKAGES=1 ;;
+        --allow-unsupported) ALLOW_UNSUPPORTED=1 ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
+    esac
+    shift
 done
 
-if [[ "${EUID}" -ne 0 ]]; then
-  echo "ERROR: run as root, for example:" >&2
-  echo "  sudo bash ./scripts/setup-all.sh" >&2
-  exit 1
+if [[ "$EUID" -ne 0 ]]; then
+    echo "Please run this setup with sudo." >&2
+    exit 1
 fi
 
-if [[ ! -f "$CDB" ]]; then
-  cat >&2 <<EOF
-ERROR: SANlight CDB file not found:
+CDB="$(realpath -m "$CDB")"
+[[ -f "$CDB" ]] || {
+    echo "ERROR: CDB not found: $CDB" >&2
+    echo "Copy SANlightMesh.json to private/ and never commit it." >&2
+    exit 1
+}
 
-  ${CDB}
+if [[ "$CDB" == "$REPO_DIR/private/"* ]]; then
+    install -d -m 0700 "$REPO_DIR/private"
+fi
+chmod 0600 "$CDB"
+install -d -m 0700 "$REPO_DIR/.state"
 
-Export SANlightMesh.json from the SANlight smartphone app and copy it to:
-
-  ${REPO_DIR}/private/SANlightMesh.json
-
-Then run this script again.
-EOF
-  exit 1
+CLI=(python3 "$REPO_DIR/sanlight_canonical_sender_poc.py" --cdb "$CDB")
+if [[ -n "$IV_INDEX" ]]; then
+    CLI+=(--iv-index "$IV_INDEX")
 fi
 
-echo "Repository: ${REPO_DIR}"
-echo "CDB: ${CDB}"
-echo "Bluetooth controller: ${HCI}"
-echo
+# Destructive actions are deliberately after semantic CDB validation and tests.
+echo "[1/6] Validating private CDB without printing secrets..."
+"${CLI[@]}" inspect
 
-echo "Checking Python syntax..."
-"$PY" -m py_compile \
-  "${REPO_DIR}/sanlight_protocol.py" \
-  "${REPO_DIR}/sanlight_canonical_sender_poc.py"
+if [[ -z "$IV_INDEX" ]]; then
+    CDB_IV="$(python3 - "$CDB" <<'PY_IV'
+import sys
+from pathlib import Path
+from sanlight_mesh.cdb import load_mesh_material
+value = load_mesh_material(Path(sys.argv[1]), 1).cdb_iv_index
+print("" if value is None else value)
+PY_IV
+)"
+    if [[ -z "$CDB_IV" ]]; then
+        echo "ERROR: this CDB has no ivIndex." >&2
+        echo "Rerun with the independently verified current value, for example:" >&2
+        echo "  sudo bash ./scripts/setup-all.sh --iv-index 0" >&2
+        echo "Do not assume 0 for an unrelated Mesh." >&2
+        exit 1
+    fi
+fi
 
-echo
-echo "Installing and starting BlueZ mesh service..."
-if [[ "$RESET" -eq 1 ]]; then
-  bash "$INSTALL_SERVICE" --hci "$HCI" --reset-mesh-state
+echo "[2/6] Running syntax and offline safety tests..."
+bash "$REPO_DIR/scripts/run-tests.sh"
+
+if [[ "$SKIP_PACKAGES" -eq 0 ]]; then
+    echo "[3/6] Installing validated Debian packages..."
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        bluez bluez-meshd dbus git procps python3 python3-dbus python3-gi rfkill
 else
-  bash "$INSTALL_SERVICE" --hci "$HCI"
+    echo "[3/6] Package installation skipped by request."
 fi
 
-echo
-echo "Running SANlight mesh import/setup..."
-"$PY" "${REPO_DIR}/sanlight_canonical_sender_poc.py" \
-  --cdb "$CDB" \
-  --iv-index 0 \
-  setup
+echo "[4/6] Checking the Raspberry Pi / BlueZ environment..."
+CHECK_ARGS=()
+[[ "$ALLOW_UNSUPPORTED" -eq 1 ]] && CHECK_ARGS+=(--allow-unsupported)
+bash "$REPO_DIR/scripts/sanlight-env-check.sh" "${CHECK_ARGS[@]}"
+
+echo "[5/6] Installing and starting the exclusive generic:hci0 Mesh service..."
+SERVICE_ARGS=()
+[[ "$RESET_MESH_STATE" -eq 1 ]] && SERVICE_ARGS+=(--reset-mesh-state)
+[[ "$ALLOW_UNSUPPORTED" -eq 1 ]] && SERVICE_ARGS+=(--allow-unsupported)
+bash "$REPO_DIR/scripts/install-service.sh" "${SERVICE_ARGS[@]}"
+
+echo "[6/6] Configuring local BlueZ identities (no lamp write commands)..."
+"${CLI[@]}" setup
 
 echo
-echo "Detected SANlight nodes:"
-"$PY" "${REPO_DIR}/sanlight_canonical_sender_poc.py" \
-  --cdb "$CDB" \
-  list-nodes
-
-cat <<EOF
-
-Setup complete.
-
-Useful next commands:
-
-  sudo python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json sync-now
-  sudo python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json get-live <NODE>
-  journalctl -u sanlight-meshd-generic.service -f
-
-EOF
+echo "Setup complete. No lamp time or brightness command was sent."
+echo
+"${CLI[@]}" list-nodes

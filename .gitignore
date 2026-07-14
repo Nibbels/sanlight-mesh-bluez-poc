@@ -1,11 +1,24 @@
-# Secrets and local BlueZ state
-private/SANlightMesh.json
-private/*.json
-.sanlight-mesh-poc-*-state.json
+# Private SANlight CDB and any other local secret material
+private/*
+!private/.gitkeep
+SANlightMesh.json
 
-# Logs / caches
-*.log
+# Local BlueZ identity tokens/state
+.state/
+.sanlight-mesh-poc-*-state.json
+*.state.json
+
+# Python
 __pycache__/
-*.pyc
-*.tgz
-*.zip
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Logs, captures, editor and OS files
+*.log
+*.pcap
+*.pcapng
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

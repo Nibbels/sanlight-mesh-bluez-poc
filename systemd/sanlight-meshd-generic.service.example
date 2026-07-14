@@ -1,19 +1,26 @@
 [Unit]
-Description=SANlight BlueZ Mesh Daemon using generic HCI
+Description=SANlight BlueZ Mesh daemon using generic HCI
 Documentation=https://github.com/Nibbels/sanlight-mesh-bluez-poc
-After=network-online.target
-Wants=network-online.target
+After=dbus.service sys-subsystem-bluetooth-devices-hci0.device
+Wants=dbus.service sys-subsystem-bluetooth-devices-hci0.device
 Conflicts=bluetooth.service bluetooth-mesh.service
+StartLimitIntervalSec=30
+StartLimitBurst=3
 
 [Service]
-Type=simple
-# Keep the unit itself minimal. Controller cleanup is done by scripts/install-service.sh
-# before starting the service. Some Bluetooth helper commands can block when used
-# as ExecStartPre under systemd.
-ExecStart=/usr/libexec/bluetooth/bluetooth-meshd --io generic:hci0 --nodetach
+Type=dbus
+BusName=org.bluez.mesh
+ExecStart=/usr/local/libexec/sanlight-meshd-generic-start
 Restart=on-failure
 RestartSec=3
-TimeoutStartSec=20
+TimeoutStartSec=25
+TimeoutStopSec=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/bluetooth/mesh
 
 [Install]
 WantedBy=multi-user.target

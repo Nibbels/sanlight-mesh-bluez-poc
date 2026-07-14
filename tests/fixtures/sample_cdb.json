@@ -1,0 +1,58 @@
+{
+  "meshUUID": "11111111-2222-4333-8444-555555555555",
+  "ivIndex": "00000000",
+  "netKeys": [
+    {"index": 0, "key": "11111111111111111111111111111111"}
+  ],
+  "appKeys": [
+    {"index": 0, "boundNetKey": 0, "key": "22222222222222222222222222222222"}
+  ],
+  "provisioners": [
+    {
+      "provisionerName": "SANlight Provisioner 1",
+      "allocatedUnicastRange": [{"lowAddress": "2400", "highAddress": "27FF"}]
+    },
+    {
+      "provisionerName": "SANlight Provisioner 2",
+      "allocatedUnicastRange": [{"lowAddress": "2800", "highAddress": "2BFF"}]
+    }
+  ],
+  "groups": [
+    {"name": "Right", "address": "C000"},
+    {"name": "Left", "address": "C001"}
+  ],
+  "nodes": [
+    {
+      "UUID": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+      "name": "SANlight Provisioner 1",
+      "deviceKey": "33333333333333333333333333333333",
+      "unicastAddress": "2400"
+    },
+    {
+      "UUID": "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff",
+      "name": "SANlight Provisioner 2",
+      "deviceKey": "44444444444444444444444444444444",
+      "unicastAddress": "2800"
+    },
+    {
+      "UUID": "cccccccc-dddd-4eee-8fff-000000000001",
+      "name": "Test Lamp Right",
+      "deviceKey": "55555555555555555555555555555555",
+      "unicastAddress": "0003",
+      "cid": "0A8B",
+      "elements": [
+        {"index": 0, "models": [{"modelId": "0A8B0001"}]}
+      ]
+    },
+    {
+      "UUID": "dddddddd-eeee-4fff-8000-000000000002",
+      "name": "Test Lamp Left",
+      "deviceKey": "66666666666666666666666666666666",
+      "unicastAddress": "0002",
+      "cid": "0A8B",
+      "elements": [
+        {"index": 0, "models": [{"modelId": "0A8B0001"}]}
+      ]
+    }
+  ]
+}

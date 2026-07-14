@@ -1,253 +1,189 @@
-# AI_CONTEXT.md
+# AI continuation context
 
+## Project objective
 
-## Address discovery / documentation rule
+This repository controls SANlight EVO Bluetooth Mesh dimmers from a Raspberry Pi through BlueZ. The immediate objective is a small, robust and auditable command-line project—not an always-on automation service.
 
-Do not hard-code `0002` / `0003` as generic SANlight node addresses in user-facing documentation. They were the unicast addresses in Stefan's CDB only:
+The current validated host path is:
 
-- `0x0002`: `3-60 1.5 Master Links`
-- `0x0003`: `3-60 1.5 Rechts`
+- Raspberry Pi OS Lite 64-bit / Debian 13 trixie
+- BlueZ 5.82
+- internal Raspberry Pi Bluetooth controller exposed as `hci0`
+- `bluetooth-meshd --io generic:hci0 --nodetach`
+- exclusive controller use by `sanlight-meshd-generic.service`
 
-Other installations may use different unicast addresses and group addresses. Tell users to run:
+Do not replace this with the default BlueZ mesh service or a different I/O backend without a separately validated test.
 
-```bash
-python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json list-nodes
-```
+## Non-negotiable security invariants
 
-or `inspect` before using `get-live`, `set-max`, `set-time`, or `sync-now`.
+Never print, commit, publish or paste:
 
-This file is a compact technical context for continuing the SANlight Bluetooth Mesh PoC from the known-good point.
+- `private/SANlightMesh.json`
+- NetKey
+- AppKey
+- DeviceKey
+- BlueZ `JoinComplete`/attach token values
+- the contents of `.state/*.json`
+- the BlueZ Mesh database
 
-## Goal
+Safe diagnostic output may contain mesh UUID, provisioner UUID/name, App-ID, unicast addresses, group names, node names, opcodes and access PDUs. Access PDUs built by the CLI do not contain NetKey/AppKey/DeviceKey.
 
-Control two SANlight EVO dimmers from a Raspberry Pi through Bluetooth Mesh without the SANlight app, initially for:
+State writes must remain atomic. `.state/` is mode `0700`; JSON state files are mode `0600`. Identity mismatch errors must not echo old or expected private values.
 
-- reading lamp time / live brightness (`get-live`),
-- setting MaxBrightness in the safe range `20..100`,
-- syncing the internal SANlight lamp clock after power loss (`sync-now`, `set-time`).
+## Safety invariants
 
-Future goal: minimal service / ioBroker integration.
+- MaxBrightness accepts only integer `20..100`.
+- `0`, `1..19`, negative values and values above `100` must be rejected before D-Bus.
+- `build_set_max_brightness_pdu()` must independently enforce the same range.
+- `0xFFFF` is rejected.
+- Destinations must exist in the CDB.
+- `get-live`, `get-net-tx`, `set-time`, `set-uptime` and targeted `sync-now` require unicast nodes.
+- Destination `all` expands to individually detected SANlight vendor-model nodes; it is not a Mesh all-nodes broadcast.
+- Setup must never call `set-max`, `set-time`, `set-uptime` or `sync-now`.
+- Setup may configure the local canonical sender and set its Bluetooth Mesh Default TTL to 5.
 
-## Working hardware / OS / BlueZ state
-
-Known-good test state:
-
-- Raspberry Pi 3 with internal Broadcom `BCM43438` Bluetooth controller on UART `hci0`.
-- Raspberry Pi OS Lite 64-bit, Debian 13 `trixie`.
-- Kernel observed in successful test: `6.18.34+rpt-rpi-v8`.
-- BlueZ observed in successful test: `5.82`.
-- `bluetooth-meshd` must be started with raw HCI I/O:
-
-```bash
-sudo /usr/libexec/bluetooth/bluetooth-meshd --io generic:hci0 --nodetach --debug
-```
-
-Important negative finding:
-
-- Bookworm / BlueZ 5.66 / default MGMT I/O on the same Pi produced BlueZ `Mesh Send Complete` logs but no externally visible Mesh `2A` / `2B` packets on a Shelly scanner.
-- The fix was not AppKey/opcode/TTL/source-address; the fix was using Trixie/BlueZ 5.82 plus `--io generic:hci0`.
-
-## Mesh identities from CDB
-
-The SANlight app CDB contains two relevant provisioners:
-
-- Control/config identity: `SANlight Provisioner 1`, App-ID 1, unicast `0x2400`.
-- Canonical sender identity: `SANlight Provisioner 2`, App-ID 2, unicast `0x2800`.
-
-The PoC imports/attaches both. Application commands are sent from `0x2800`.
-
-Known SANlight nodes:
-
-- `0x0002` = `3-60 1.5 Master Links`
-- `0x0003` = `3-60 1.5 Rechts`
-
-Known groups from CDB:
-
-- `0xC000` = `Rechts`
-- `0xC001` = `Links`
-
-Prefer unicast writes during testing.
-
-## Vendor model and opcodes
-
-SANlight Company ID:
-
-- `0x0A8B`
-
-Vendor model:
-
-- Company `0x0A8B`, model `0x0001`
-
-Validated opcodes:
-
-- `0x06` Set Max Brightness, access PDU prefix `c6 8b 0a`, payload 1 byte percent.
-- `0x07` Set Max Brightness Status, access PDU prefix `c7 8b 0a`.
-- `0x0A` Set Uptime, access PDU prefix `ca 8b 0a`, payload uint32 little-endian milliseconds since local lamp day start.
-- `0x0B` Set Uptime Status, access PDU prefix `cb 8b 0a`.
-- `0x0C` Get Uptime and Brightness, access PDU `cc 8b 0a`.
-- `0x0D` Get Uptime and Brightness Status, access PDU prefix `cd 8b 0a`.
-
-Important correction:
-
-- The SANlight SetUptime payload is milliseconds since day start, not seconds.
-- CLI `set-uptime` accepts seconds and converts to milliseconds on the wire.
-- `set-time` and `sync-now` compute milliseconds since local midnight.
-
-## Validated command behavior
-
-Setup:
-
-```bash
-sudo python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json --iv-index 0 setup
-```
-
-Expected:
-
-- control identity import/attach OK,
-- canonical sender import/attach OK,
-- AppKey 0 imported/bound,
-- vendor model binding confirmed,
-- Default TTL set to `5`,
-- `SETUP OK`.
-
-Read live state:
-
-```bash
-sudo python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json get-live 0003
-```
-
-Validated response example:
-
-- status opcode `0x0D` from `0x0003` to `0x2800`,
-- first uint32 interpreted as milliseconds since lamp day start,
-- uint16 interpreted as live/profile brightness-related value.
-
-Set MaxBrightness:
-
-```bash
-sudo python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json set-max 0003 68
-```
-
-Validated effect:
-
-- `0003` changed App value to `Rechts 68%`.
-- Setting both `0002` and `0003` to `68` resulted in App values `Mesh 68%, Rechts 68%, Links 68%`.
-
-Set time manually:
-
-```bash
-sudo python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json set-time all 10:38:30
-```
-
-Validated behavior:
-
-- Sends `38310000 ms` (`10:38:30.000`) to both nodes.
-- Both nodes returned SetUptime Status `0x0B` in the successful test.
-- A following `get-live` showed about `38320124 ms`, i.e. the clock advanced plausibly.
-
-Sync to current Pi time:
-
-```bash
-sudo python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json sync-now
-```
-
-Validated behavior:
-
-- Computes local system time as milliseconds since local midnight.
-- Example: `17:00:58.301` -> `61258301 ms`.
-- A following `get-live` from `0003` showed about `61265168 ms`, matching the expected passage of time.
-
-## Runtime and files
-
-Secrets and state:
-
-- `private/SANlightMesh.json` contains NetKey/AppKey/DeviceKey material.
-- `.sanlight-mesh-poc-provisioner-state.json` contains local BlueZ token/state.
-- `.sanlight-mesh-poc-appid2-sender-state.json` contains local BlueZ token/state.
-- `/var/lib/bluetooth/mesh` contains BlueZ local mesh node state.
-
-Do not commit or share any of these.
-
-Minimal files needed in the repository:
-
-- `sanlight_canonical_sender_poc.py`
-- `sanlight_protocol.py`
-- `INSTRUCTIONS.md`
-- `AI_CONTEXT.md`
-- `.gitignore`
-- `private/.gitkeep`
-- optional `systemd/sanlight-meshd-generic.service.example`
-- optional `scripts/start-meshd-generic.sh`
-
-No logs, APKs, screenshots, pycache, backups, or CDB files belong in the repository.
-
-## Open points / productization TODO
-
-- Convert PoC into a small service/API rather than repeated CLI process startup.
-- Add idempotent startup behavior: start mesh daemon, ensure setup, then expose commands.
-- Add periodic `sync-now`, especially after power loss or gateway restart.
-- Add MaxBrightness scaling logic for both nodes, bounded `20..100`.
-- Add ioBroker integration or a simple local HTTP/MQTT bridge.
-- Decide whether to preserve the DECT200 midnight hard-reset as fallback or replace it with `sync-now`.
-- Add structured JSON output mode for automation consumers.
-
-
-## Service-first setup
-
-For productive usage, do not document the two-terminal `bluetooth-meshd` debug mode as the primary path. The primary path is:
-
-```bash
-sudo ./scripts/install-service.sh
-sudo python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json --iv-index 0 setup
-```
-
-The installer creates and starts `sanlight-meshd-generic.service`, using:
+## Repository architecture
 
 ```text
-/usr/libexec/bluetooth/bluetooth-meshd --io generic:hci0 --nodetach
+sanlight_canonical_sender_poc.py  stable compatibility entry point
+sanlight_protocol.py              compatibility re-exports
+sanlight_mesh/
+  cli.py                          argparse, offline preflight and redacted output
+  cdb.py                          strict CDB loading and destination validation
+  protocol.py                     pure PDU and clock helpers
+  state.py                        private atomic token-state storage
+  locking.py                      exclusive single-process runtime guard
+  bluez_runtime.py                D-Bus applications, elements and workflows
+scripts/
+  setup-all.sh                    ordered first-time setup
+  install-service.sh              service installation and readiness check
+  start-meshd-generic.sh          generic:hci0 launcher
+  sanlight-env-check.sh           validated-platform checks
+  run-tests.sh                    offline tests and static token-output scan
+systemd/
+  sanlight-meshd-generic.service.example
+tests/                            standard-library unittest suite; fake keys only
 ```
 
-Manual foreground daemon mode remains a debug fallback only.
+Offline commands deliberately do not import `dbus` or `gi`. This allows CDB validation and tests before package installation.
 
+## CDB identity model
 
-## systemd service nuance
+The default identities are loaded by node name:
 
-Do not put hciconfig or btmgmt into ExecStartPre for the productive service. On the tested Pi this could block and cause a systemd start timeout after rfkill succeeded. The installer should prepare the controller before starting the service; the service unit should directly run:
+- control App-ID 1: `SANlight Provisioner 1`, typically primary unicast `0x2400`
+- canonical sender App-ID 2: `SANlight Provisioner 2`, typically primary unicast `0x2800`
 
-```text
-/usr/libexec/bluetooth/bluetooth-meshd --io generic:hci0 --nodetach
-```
+Addresses are CDB-derived and must not be hard-coded as universal. Both identities must share mesh UUID, primary NetKey index/key and primary AppKey index/key, while using distinct provisioner UUIDs and unicast addresses.
 
+A SANlight lamp node is detected only when:
 
-## First-time setup semantics
+- node `cid` is `0A8B`; and
+- an element contains vendor model ID `0A8B0001`.
 
-The recommended first-time setup path is now:
+This avoids treating provisioners or unrelated CDB nodes as lamps for destination `all`.
+
+## Validated protocol material
+
+Company ID: `0x0A8B`, encoded little-endian as `8B 0A` after a three-octet vendor opcode.
+
+- SetMaxBrightness: opcode `0x06`, access prefix `C6 8B 0A`, one percent byte
+- SetMaxBrightness Status: `C7 8B 0A`
+- GetMaxBrightness: `C8 8B 0A`
+- GetMaxBrightness Status: `C9 8B 0A`
+- SetUptime: `CA 8B 0A` + uint32 little-endian milliseconds
+- SetUptime Status: `CB 8B 0A`
+- GetUptimeAndBrightness: `CC 8B 0A`
+- GetUptimeAndBrightness Status: `CD 8B 0A`
+
+A six-byte `0x0D` parameter body has been observed as:
+
+- bytes 0..3: uint32 little-endian milliseconds since local midnight
+- bytes 4..5: uint16 little-endian brightness-related raw value
+
+Do not silently relabel the uint16 value as a confirmed percent without further protocol validation.
+
+Bluetooth Mesh configuration PDUs used:
+
+- Config Network Transmit Get: `80 23`
+- Config Network Transmit Status: `80 25 <encoded>`
+- Config Default TTL Set 5: `80 0D 05`
+- Config Default TTL Status: `80 0E <ttl>`
+- Config Model App Bind: `80 3D` + little-endian element/AppKey/company/model fields
+
+## BlueZ setup workflow
+
+1. Register local D-Bus application objects for control and sender.
+2. Import or attach control App-ID 1.
+3. Import primary NetKey and AppKey into control `Management1`.
+4. Import or attach canonical sender App-ID 2.
+5. Import the sender DeviceKey as a remote node into control `Management1`.
+6. Add AppKey 0 to the sender when needed.
+7. Bind AppKey 0 to vendor model `0x0A8B/0x0001`.
+8. Set and confirm sender Default TTL 5.
+9. Persist local BlueZ tokens without displaying them.
+
+The binding callback is gated by remote DeviceKey readiness so that an asynchronous `UpdateModelConfiguration` signal cannot trigger a DevKey TTL message too early.
+
+## Setup transaction ordering
+
+`setup-all.sh` must preserve this order:
+
+1. locate and chmod the private CDB;
+2. run `inspect` and require IV Index information;
+3. run compile and unit tests;
+4. install packages;
+5. validate environment;
+6. install/start service and wait for `org.bluez.mesh` with a hard timeout;
+7. execute local identity setup;
+8. show read-only verification only.
+
+`--reset-mesh-state` is explicit and occurs only after CDB preflight and tests. Never reintroduce an unconditional reset.
+
+## Service lessons
+
+A clean trixie image exposed a real failure because an earlier unit used `/usr/bin/rfkill`. Debian installs `rfkill` outside that path. The revised launcher:
+
+- installs the `rfkill` package;
+- uses a complete service `PATH` and `command -v rfkill`;
+- treats unblock failure as non-fatal but verifies `hci0`;
+- discovers `bluetooth-meshd` from known Debian locations;
+- exits with a concise error before launching if prerequisites are missing.
+
+The installer starts the service asynchronously and polls `busctl tree org.bluez.mesh /org/bluez/mesh` for up to 25 seconds. Failure prints status and recent journal lines.
+
+## Testing expectations
+
+Before packaging or committing:
 
 ```bash
-sudo bash ./scripts/setup-all.sh
+bash ./scripts/run-tests.sh
 ```
 
-It intentionally resets local Raspberry Pi state by default:
+Also inspect the archive:
 
-- `/var/lib/bluetooth/mesh/*`
-- `.sanlight-mesh-poc-*-state.json`
+```bash
+unzip -l <archive>.zip
+```
 
-This is safe for the PoC because the SANlight network identity is rebuilt from `private/SANlightMesh.json`; it does not unprovision or reset the actual lamps. The script does not change brightness or lamp time.
+The archive must not contain:
 
-`--keep-state` exists for service repair / non-destructive reruns. `install-service.sh --reset-mesh-state` must also delete `.sanlight-mesh-poc-*-state.json`, otherwise BlueZ attach can fail with `org.bluez.mesh.Error.NotFound` after a local BlueZ state reset.
+- `SANlightMesh.json`
+- `.state/`
+- state JSON files
+- logs or packet captures
+- `__pycache__`
+- real keys or token values
 
+Hardware claims require a Raspberry Pi test. Container/unit tests can validate syntax, CLI behavior, CDB parsing, bytes and filesystem safety, but cannot prove D-Bus timing, HCI ownership or RF reception.
 
-## Documentation structure rule
+## Next sensible milestones
 
-README.md is for first impression, visual overview, jumpstart commands, and links only. Do not put detailed setup, service repair, or debug procedure blocks there.
+After the clean-image installation is validated:
 
-SETUP.md is the minimal first-time path only:
+1. add a machine-readable `get-live --json` result without changing default output;
+2. add an optional long-running service only after command-line reliability is established;
+3. add time-drift monitoring as read-only behavior before any opt-in automatic synchronization;
+4. integrate ioBroker/MQTT in a separate adapter layer, not inside protocol/CDB modules.
 
-1. Install Raspberry Pi OS/packages.
-2. Get repository and `private/SANlightMesh.json` in place.
-3. Run `sudo bash ./scripts/setup-all.sh`.
-4. Run one safe read-only `get-live` test.
-
-INSTRUCTIONS.md contains detailed setup options, service repair, known-good versions, command reference, and troubleshooting.
-
-AI_CONTEXT.md contains deep debugging notes, rationale, architecture, validated vendor opcodes, historical dead ends, and future continuation context.
+Automatic clock or brightness changes must remain explicit opt-in runtime behavior and must never become part of installation.
