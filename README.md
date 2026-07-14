@@ -35,6 +35,8 @@ Then run the CDB import/setup once:
 sudo python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json --iv-index 0 setup
 ```
 
+The generated systemd unit is intentionally minimal: Bluetooth cleanup happens in `install-service.sh` before service start, not inside `ExecStartPre`.
+
 Check logs with:
 
 ```bash

@@ -135,6 +135,7 @@ What the script does:
 - resolves the absolute paths of `rfkill`, `hciconfig`, `btmgmt`, and `bluetooth-meshd`
 - installs `/etc/systemd/system/sanlight-meshd-generic.service`
 - starts `bluetooth-meshd --io generic:hci0 --nodetach`
+- does not put `hciconfig` or `btmgmt` into `ExecStartPre`, because these helpers can block under systemd
 - enables the service for reboot
 - checks whether `org.bluez.mesh` appears on D-Bus
 

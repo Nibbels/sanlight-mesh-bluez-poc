@@ -208,3 +208,12 @@ The installer creates and starts `sanlight-meshd-generic.service`, using:
 ```
 
 Manual foreground daemon mode remains a debug fallback only.
+
+
+## systemd service nuance
+
+Do not put hciconfig or btmgmt into ExecStartPre for the productive service. On the tested Pi this could block and cause a systemd start timeout after rfkill succeeded. The installer should prepare the controller before starting the service; the service unit should directly run:
+
+```text
+/usr/libexec/bluetooth/bluetooth-meshd --io generic:hci0 --nodetach
+```

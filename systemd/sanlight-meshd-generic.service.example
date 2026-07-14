@@ -7,13 +7,13 @@ Conflicts=bluetooth.service bluetooth-mesh.service
 
 [Service]
 Type=simple
-# Paths vary by distribution. Prefer scripts/install-service.sh because it writes resolved absolute paths.
-ExecStartPre=/usr/sbin/rfkill unblock bluetooth
-ExecStartPre=-/usr/bin/hciconfig hci0 down
-ExecStartPre=-/usr/bin/btmgmt --index 0 power off
+# Keep the unit itself minimal. Controller cleanup is done by scripts/install-service.sh
+# before starting the service. Some Bluetooth helper commands can block when used
+# as ExecStartPre under systemd.
 ExecStart=/usr/libexec/bluetooth/bluetooth-meshd --io generic:hci0 --nodetach
 Restart=on-failure
 RestartSec=3
+TimeoutStartSec=20
 
 [Install]
 WantedBy=multi-user.target

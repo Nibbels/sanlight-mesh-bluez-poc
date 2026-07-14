@@ -28,6 +28,9 @@ What this script does:
   - enables the service for reboot
   - starts it immediately unless --no-start is used
 
+The generated systemd unit intentionally has no Bluetooth cleanup commands in ExecStartPre.
+The cleanup is done by this installer before service start, because hciconfig/btmgmt can block under systemd.
+
 It does not copy or modify private/SANlightMesh.json.
 It does not run the Python 'setup' command.
 USAGE
@@ -158,12 +161,13 @@ Conflicts=bluetooth.service bluetooth-mesh.service
 
 [Service]
 Type=simple
-ExecStartPre=${RFKILL} unblock bluetooth
-ExecStartPre=-${HCICONFIG} ${HCI} down
-ExecStartPre=-${BTMGMT} --index ${HCI_INDEX} power off
+# Keep the unit itself minimal. Controller cleanup is done by install-service.sh
+# before starting the service. Some Bluetooth helper commands can block when
+# used as ExecStartPre under systemd.
 ExecStart=${MESHD} --io generic:${HCI} --nodetach
 Restart=on-failure
 RestartSec=3
+TimeoutStartSec=20
 
 [Install]
 WantedBy=multi-user.target
