@@ -187,6 +187,10 @@ Project rules:
 
 - setup must not alter Sequence Number automatically;
 - use `scripts/diagnose-replay.sh NODE_ADDRESS` for the read-only two-identity probe;
+- each diagnostic identity must be retried before classification; a clean-image
+  test produced one transient canonical-sender timeout immediately followed by a
+  successful standalone probe, so one missing Config Status is not sufficient
+  evidence of replay protection;
 - use `show-sender-state` for live non-secret Node1 IV/sequence properties;
 - `recover-sequence` is explicit, root-only, forward-only, backed up, atomic, and requires `--confirm-replay-recovery`;
 - recovery targets are valid only in `1..0xBFFFFF`; protocol maximum remains `0xFFFFFF`;

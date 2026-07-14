@@ -306,13 +306,23 @@ Run the combined read-only diagnosis with one detected lamp node:
 sudo bash ./scripts/diagnose-replay.sh 0002
 ```
 
-The script performs two Config Network Transmit Gets:
+The script probes both identities and gives each path up to two attempts. It also
+pauses briefly between the short-lived D-Bus application processes. A single
+missing Config Status reply is **not** classified as replay protection because a
+valid Bluetooth Mesh response can occasionally be lost or arrive outside the
+10-second observation window.
 
-- control identity responds and canonical sender does not: likely reused-sender
-  replay state;
+Interpret the result only after the retries:
+
+- control identity responds and canonical sender does not after both attempts:
+  likely reused-sender replay state;
 - both respond: sender sequence state is accepted;
-- neither responds: investigate RF, IV Index, keys, service, and controller
-  ownership instead.
+- neither responds after both attempts: investigate RF, IV Index, keys, service,
+  and controller ownership instead.
+
+A negative result remains a strong diagnostic indication, not mathematical
+proof. The script prints a restricted, non-secret summary of failed attempts so
+that a transient timeout is visible before any recovery is considered.
 
 The exact highest Sequence Number stored inside a lamp cannot be queried through
 a standard Bluetooth Mesh model or read from an ordinary BLE advertisement. A
