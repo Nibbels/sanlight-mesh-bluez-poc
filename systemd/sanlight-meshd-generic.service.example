@@ -7,8 +7,9 @@ Conflicts=bluetooth.service bluetooth-mesh.service
 
 [Service]
 Type=simple
-ExecStartPre=/usr/bin/rfkill unblock bluetooth
-ExecStartPre=-/usr/sbin/hciconfig hci0 down
+# Paths vary by distribution. Prefer scripts/install-service.sh because it writes resolved absolute paths.
+ExecStartPre=/usr/sbin/rfkill unblock bluetooth
+ExecStartPre=-/usr/bin/hciconfig hci0 down
 ExecStartPre=-/usr/bin/btmgmt --index 0 power off
 ExecStart=/usr/libexec/bluetooth/bluetooth-meshd --io generic:hci0 --nodetach
 Restart=on-failure

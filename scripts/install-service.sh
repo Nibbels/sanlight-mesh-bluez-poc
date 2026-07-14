@@ -73,53 +73,71 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
-require_cmd() {
+find_cmd() {
   local cmd="$1"
-  if ! command -v "$cmd" >/dev/null 2>&1; then
+  local path
+  path="$(command -v "$cmd" 2>/dev/null || true)"
+  if [[ -z "$path" ]]; then
     echo "ERROR: required command not found: $cmd" >&2
     exit 1
   fi
+  printf '%s\n' "$path"
 }
 
-require_path() {
+find_path() {
   local path="$1"
   if [[ ! -e "$path" ]]; then
     echo "ERROR: required path not found: $path" >&2
     exit 1
   fi
+  printf '%s\n' "$path"
 }
 
-require_cmd systemctl
-require_cmd rfkill
-require_cmd hciconfig
-require_cmd btmgmt
-require_cmd busctl
-require_path /usr/libexec/bluetooth/bluetooth-meshd
+SYSTEMCTL="$(find_cmd systemctl)"
+RFKILL="$(find_cmd rfkill)"
+HCICONFIG="$(find_cmd hciconfig)"
+BTMGMT="$(find_cmd btmgmt)"
+BUSCTL="$(find_cmd busctl)"
+PKILL="$(find_cmd pkill)"
+MESHD="$(find_path /usr/libexec/bluetooth/bluetooth-meshd)"
 
-if ! hciconfig "$HCI" >/dev/null 2>&1; then
+if ! "$HCICONFIG" "$HCI" >/dev/null 2>&1; then
   echo "ERROR: Bluetooth controller '$HCI' was not found." >&2
   echo "Available controllers:" >&2
-  hciconfig -a >&2 || true
+  "$HCICONFIG" -a >&2 || true
+  exit 1
+fi
+
+if [[ "$HCI" =~ ^hci([0-9]+)$ ]]; then
+  HCI_INDEX="${BASH_REMATCH[1]}"
+else
+  echo "ERROR: HCI controller must look like hci0, hci1, ...; got: $HCI" >&2
   exit 1
 fi
 
 echo "Repository: ${REPO_DIR}"
 echo "Bluetooth controller: ${HCI}"
+echo "Resolved commands:"
+echo "  rfkill:          ${RFKILL}"
+echo "  hciconfig:       ${HCICONFIG}"
+echo "  btmgmt:          ${BTMGMT}"
+echo "  bluetooth-meshd: ${MESHD}"
 echo
 
 echo "Stopping conflicting Bluetooth services/processes..."
-systemctl stop bluetooth.service 2>/dev/null || true
-systemctl stop bluetooth-mesh.service 2>/dev/null || true
-systemctl stop "${SERVICE_NAME}.service" 2>/dev/null || true
-pkill -x bluetoothd 2>/dev/null || true
-pkill -x bluetooth-meshd 2>/dev/null || true
+"$SYSTEMCTL" stop bluetooth.service 2>/dev/null || true
+"$SYSTEMCTL" stop bluetooth-mesh.service 2>/dev/null || true
+"$SYSTEMCTL" stop "${SERVICE_NAME}.service" 2>/dev/null || true
+"$SYSTEMCTL" reset-failed "${SERVICE_NAME}.service" 2>/dev/null || true
+"$PKILL" -x bluetoothd 2>/dev/null || true
+"$PKILL" -x bluetooth-meshd 2>/dev/null || true
 
 echo "Unblocking Bluetooth and putting ${HCI} into a clean state..."
-rfkill unblock bluetooth || true
-rfkill unblock all || true
-hciconfig "$HCI" down 2>/dev/null || true
-btmgmt --index "${HCI#hci}" power off 2>/dev/null || true
-rfkill unblock bluetooth || true
+"$RFKILL" unblock bluetooth || true
+"$RFKILL" unblock all || true
+"$HCICONFIG" "$HCI" down 2>/dev/null || true
+"$BTMGMT" --index "$HCI_INDEX" power off 2>/dev/null || true
+"$RFKILL" unblock bluetooth || true
 
 if [[ "$RESET_MESH_STATE" -eq 1 ]]; then
   echo "Resetting BlueZ mesh state under ${MESH_DIR} ..."
@@ -140,10 +158,10 @@ Conflicts=bluetooth.service bluetooth-mesh.service
 
 [Service]
 Type=simple
-ExecStartPre=/usr/bin/rfkill unblock bluetooth
-ExecStartPre=-/usr/sbin/hciconfig ${HCI} down
-ExecStartPre=-/usr/bin/btmgmt --index ${HCI#hci} power off
-ExecStart=/usr/libexec/bluetooth/bluetooth-meshd --io generic:${HCI} --nodetach
+ExecStartPre=${RFKILL} unblock bluetooth
+ExecStartPre=-${HCICONFIG} ${HCI} down
+ExecStartPre=-${BTMGMT} --index ${HCI_INDEX} power off
+ExecStart=${MESHD} --io generic:${HCI} --nodetach
 Restart=on-failure
 RestartSec=3
 
@@ -151,17 +169,23 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload
-systemctl enable "${SERVICE_NAME}.service"
+"$SYSTEMCTL" daemon-reload
+"$SYSTEMCTL" enable "${SERVICE_NAME}.service"
 
 if [[ "$START_SERVICE" -eq 1 ]]; then
   echo "Starting ${SERVICE_NAME}.service ..."
-  systemctl start "${SERVICE_NAME}.service"
+  if ! "$SYSTEMCTL" start "${SERVICE_NAME}.service"; then
+    echo
+    echo "ERROR: Service did not start. Recent logs:" >&2
+    journalctl -u "${SERVICE_NAME}.service" -n 80 --no-pager >&2 || true
+    exit 1
+  fi
+
   sleep 2
-  systemctl --no-pager --full status "${SERVICE_NAME}.service" || true
+  "$SYSTEMCTL" --no-pager --full status "${SERVICE_NAME}.service" || true
   echo
   echo "Checking D-Bus object org.bluez.mesh ..."
-  if busctl tree org.bluez.mesh >/tmp/${SERVICE_NAME}.busctl 2>&1; then
+  if "$BUSCTL" tree org.bluez.mesh >/tmp/${SERVICE_NAME}.busctl 2>&1; then
     cat /tmp/${SERVICE_NAME}.busctl
     echo
     echo "OK: org.bluez.mesh is visible."

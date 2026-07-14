@@ -132,6 +132,7 @@ What the script does:
 - stops `bluetooth.service`, `bluetooth-mesh.service`, and old `bluetooth-meshd` processes
 - unblocks Bluetooth with `rfkill`
 - prepares `hci0`
+- resolves the absolute paths of `rfkill`, `hciconfig`, `btmgmt`, and `bluetooth-meshd`
 - installs `/etc/systemd/system/sanlight-meshd-generic.service`
 - starts `bluetooth-meshd --io generic:hci0 --nodetach`
 - enables the service for reboot

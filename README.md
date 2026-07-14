@@ -17,7 +17,7 @@ The default/MGMT mesh I/O path was not reliable in the original tests: BlueZ rep
 
 ## Minimal service installation
 
-Install and start the BlueZ mesh daemon service:
+Install and start the BlueZ mesh daemon service. The installer resolves command paths such as `rfkill`, because their location can differ between distributions:
 
 ```bash
 sudo ./scripts/install-service.sh
