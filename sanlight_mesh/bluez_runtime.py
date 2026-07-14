@@ -348,11 +348,27 @@ class SenderElement(dbus.service.Object):
         net_index: dbus.UInt16,
         data: dbus.Array,
     ) -> None:
+        source_int = int(source)
         payload = bytes(int(value) for value in data)
         print(
-            f"Sender RX DevKey: src=0x{int(source):04X} remote={bool(remote)} "
+            f"Sender RX DevKey: src=0x{source_int:04X} remote={bool(remote)} "
             f"netKey={int(net_index)} pdu={payload.hex()}"
         )
+
+        if (
+            self.runtime.args.command == "get-net-tx-sender"
+            and is_config_network_transmit_status(payload)
+        ):
+            if source_int != self.runtime.args.destination:
+                print(
+                    "Ignoring Config Network Transmit Status from unexpected source "
+                    f"0x{source_int:04X}."
+                )
+                return
+            transmissions, interval_ms = decode_config_network_transmit_status(payload)
+            self.runtime.on_network_transmit_status(
+                source_int, transmissions, interval_ms, payload[2]
+            )
 
     @dbus.service.method(MESH_ELEMENT_IFACE, in_signature="qa{sv}", out_signature="")
     def UpdateModelConfiguration(
@@ -383,6 +399,7 @@ class BluezRuntime:
         self.control_node: dbus.Interface | None = None
         self.control_management: dbus.Interface | None = None
         self.sender_node: dbus.Interface | None = None
+        self.sender_management: dbus.Interface | None = None
         self.sender_bound = False
         self.sender_remote_key_ready = False
         self.app_key_added = False
@@ -457,6 +474,7 @@ class BluezRuntime:
                 self.start_setup()
             elif self.args.command in (
                 "get-live",
+                "get-net-tx-sender",
                 "set-max",
                 "set-uptime",
                 "set-time",
@@ -767,6 +785,7 @@ class BluezRuntime:
         print(f"Canonical sender attached: {node_path}")
         node_object = self.bus.get_object(MESH_SERVICE, str(node_path))
         self.sender_node = dbus.Interface(node_object, MESH_NODE_IFACE)
+        self.sender_management = dbus.Interface(node_object, MESH_MGMT_IFACE)
         self.sender_bound = self.configuration_has_binding(configuration)
         print(f"Canonical sender AppKey-0 vendor binding present: {self.sender_bound}")
         if self.args.command == "setup":
@@ -932,7 +951,9 @@ class BluezRuntime:
         self.attach_sender(token)
 
     def on_sender_ready(self) -> None:
-        if self.args.command == "get-live":
+        if self.args.command == "get-net-tx-sender":
+            self.prepare_sender_network_transmit_probe()
+        elif self.args.command == "get-live":
             self.send_get_live()
         elif self.args.command == "set-max":
             self.send_max_brightness()
@@ -940,6 +961,58 @@ class BluezRuntime:
             self.send_set_uptime()
         else:
             self.fail(f"Unexpected command after sender attach: {self.args.command}")
+
+    def prepare_sender_network_transmit_probe(self) -> None:
+        if self.sender_management is None:
+            self.fail("Canonical sender Management1 interface is unavailable")
+            return
+        target = self.args.destination
+        device_key = load_cdb_node_device_key(self.args.cdb, target)
+        print(
+            "Preparing read-only Config Network Transmit Get from canonical "
+            f"sender 0x{self.sender_unicast:04X} to 0x{target:04X}."
+        )
+        self.sender_management.ImportRemoteNode(
+            dbus.UInt16(target),
+            dbus.Byte(1),
+            byte_array(device_key),
+            reply_handler=self.send_sender_network_transmit_get,
+            error_handler=self.on_sender_network_probe_remote_key_error,
+        )
+
+    def on_sender_network_probe_remote_key_error(self, error: BaseException) -> None:
+        if dbus_error_name(error).endswith("AlreadyExists"):
+            self.send_sender_network_transmit_get()
+            return
+        self.fail(f"Sender Management1.ImportRemoteNode failed: {error}")
+
+    def send_sender_network_transmit_get(self) -> None:
+        if self.sender_node is None:
+            self.fail("Canonical sender Node1 interface is unavailable")
+            return
+        payload = build_config_network_transmit_get_pdu()
+        description = validate_destination(self.control, self.args.destination)
+        print(
+            "Sending read-only Config Network Transmit Get via canonical sender "
+            f"0x{self.sender_unicast:04X} to 0x{self.args.destination:04X} "
+            f"({description}); PDU={payload.hex()}"
+        )
+        self.sender_node.DevKeySend(
+            dbus.ObjectPath(SENDER_ELEMENT_PATH),
+            dbus.UInt16(self.args.destination),
+            dbus.Boolean(True),
+            dbus.UInt16(self.control.net_index),
+            empty_options(),
+            byte_array(payload),
+            reply_handler=lambda: print(
+                "Sender Config Network Transmit Get accepted."
+            ),
+            error_handler=lambda error: self.fail(
+                "Canonical sender Node1.DevKeySend Network Transmit Get failed: "
+                f"{error}"
+            ),
+        )
+        self.timeout(10, self.finish_network_transmit_probe)
 
     def send_get_live(self) -> None:
         if self.sender_node is None:

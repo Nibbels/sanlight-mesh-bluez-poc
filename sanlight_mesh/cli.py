@@ -100,9 +100,18 @@ def build_parser() -> argparse.ArgumentParser:
     get_live.add_argument("destination", type=parse_destination)
 
     get_net_tx = commands.add_parser(
-        "get-net-tx", help="read Config Network Transmit from one unicast node"
+        "get-net-tx", help="read Config Network Transmit via control identity"
     )
     get_net_tx.add_argument("destination", type=parse_destination)
+
+    get_net_tx_sender = commands.add_parser(
+        "get-net-tx-sender",
+        help=(
+            "diagnostic: read Config Network Transmit via canonical sender "
+            "identity (read-only)"
+        ),
+    )
+    get_net_tx_sender.add_argument("destination", type=parse_destination)
 
     set_max = commands.add_parser(
         "set-max", help="set MaxBrightness; safety range is strictly 20..100"
@@ -162,7 +171,7 @@ def _validate_node_destination(
 
 def validate_args(args: argparse.Namespace, control: MeshMaterial) -> None:
     args.iv_index = _validate_iv_index(args.iv_index)
-    if args.command in ("get-live", "get-net-tx"):
+    if args.command in ("get-live", "get-net-tx", "get-net-tx-sender"):
         _validate_node_destination(control, args.destination, args.command)
     elif args.command == "set-max":
         validate_destination(control, args.destination)
