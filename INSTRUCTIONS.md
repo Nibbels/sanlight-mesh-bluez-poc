@@ -87,13 +87,27 @@ sudo python3 sanlight_canonical_sender_poc.py \
 
 The first column of the lamp table is named `NODE_ADDRESS`. It is the four-digit unicast address used by commands such as `get-live`, for example `0002` or `0003`. Group addresses such as `C000` are listed separately and cannot be used by read-only node commands.
 
-Read lamp time and brightness from one unicast lamp node:
+Read lamp time and the still-partially-understood brightness-related raw field from one unicast lamp node:
 
 ```bash
 sudo python3 sanlight_canonical_sender_poc.py \
     --cdb private/SANlightMesh.json \
     get-live <NODE_ADDRESS>
 ```
+
+Read the configured MaxBrightness percentage from one unicast lamp node:
+
+```bash
+sudo python3 sanlight_canonical_sender_poc.py \
+    --cdb private/SANlightMesh.json \
+    get-max <NODE_ADDRESS>
+```
+
+`get-max` sends SANlight GetMaxBrightness (`C8 8B 0A`) and requires a matching
+status (`C9 8B 0A <PERCENT>`). It accepts only the requested source node, the
+expected AppKey and a response addressed back to the canonical sender. The
+status must contain exactly one byte in the valid `20..100` range. A missing or
+malformed response is retried once and never changes lamp state.
 
 Read the Bluetooth Mesh Config Network Transmit setting from one unicast node:
 
@@ -128,21 +142,36 @@ sudo python3 sanlight_canonical_sender_poc.py \
     set-max <NODE_OR_GROUP_ADDRESS> 68
 ```
 
-For a unicast node, `set-max` waits up to four seconds for a matching SANlight
-`0x07` status. A status counts only when it uses AppKey 0, is addressed back to
-the canonical sender and comes from the exact requested node. Unrelated or late
-status traffic from another lamp cannot falsely confirm the command.
+For a unicast node, `set-max` uses two independent response layers:
 
-When the first status is lost, the command waits one additional second and sends
-the **same value once more**. Setting the same MaxBrightness value is idempotent;
-the retry does not increment or scale the requested percentage. A matching status
-ends the command immediately.
+1. It waits up to four seconds for a matching SANlight `0x07` acknowledgement.
+   The acknowledgement counts only when source node, AppKey and response
+   destination match the active transaction. If it is lost, the exact same
+   idempotent value is sent one more time after a one-second delay.
+2. Whether or not `0x07` was observed, the command then performs a read-only
+   GetMaxBrightness query and compares the reported percentage with the
+   requested value. A missing query response or a transient mismatch is queried
+   once more. The write itself is never repeated because of a readback mismatch.
 
-If BlueZ accepts both unicast transmissions but neither matching status arrives,
-the command exits with code `3` and reports `SET-MAX UNCONFIRMED`. This is not
-proof that the write failed: a lamp can apply the value even when its response is
-lost. Fully close and reconnect the SANlight app to refresh its cached display.
-Do not loop recovery writes merely because exit code `3` was returned.
+Successful unicast output ends with:
+
+```text
+SET-MAX VERIFIED. Node 0x0003 reports MaxBrightness 48% as requested.
+```
+
+The final exit status is:
+
+- `0`: readback matched the requested percentage;
+- `1`: local BlueZ/D-Bus failure;
+- `2`: invalid command, destination or unsafe value;
+- `3`: the write was sent but no valid readback could confirm it;
+- `4`: the lamp replied with a valid but different MaxBrightness percentage on
+  both readback attempts.
+
+Exit code `3` does not prove that the write failed. Exit code `4` is a real
+readback mismatch and must not be hidden by further automatic writes. Fully
+closing and reconnecting the SANlight app remains a useful independent check;
+the app may display a cached value until it reconnects.
 
 A Mesh group write is sent only once. Responses from individual group members
 cannot prove that every member applied the value, so group output is explicitly

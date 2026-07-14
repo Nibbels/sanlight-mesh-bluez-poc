@@ -25,6 +25,7 @@ from .constants import (
 from .protocol import (
     build_config_default_ttl_set_pdu,
     build_config_network_transmit_get_pdu,
+    build_get_max_brightness_pdu,
     build_get_uptime_brightness_pdu,
     build_set_max_brightness_pdu,
     build_set_uptime_pdu,
@@ -32,9 +33,11 @@ from .protocol import (
     config_default_ttl_status_value,
     decode_config_network_transmit_status,
     format_milliseconds_as_clock,
+    get_max_brightness_status_value,
     get_uptime_brightness_status_parameters,
     is_config_default_ttl_status,
     is_config_network_transmit_status,
+    is_get_max_brightness_status,
     is_get_uptime_brightness_status,
     is_set_max_brightness_status,
     is_set_uptime_status,
@@ -43,12 +46,17 @@ from .protocol import (
     validate_uptime_seconds,
 )
 from .sequence_recovery import MESH_SEQUENCE_MAX, RECOVERY_TARGET_MAX
-from .set_max_policy import (
+from .max_brightness_policy import (
+    GET_MAX_MAX_ATTEMPTS,
+    GET_MAX_RETRY_DELAY_SECONDS,
+    GET_MAX_STATUS_TIMEOUT_SECONDS,
+    MAX_BRIGHTNESS_MISMATCH_EXIT_CODE,
+    MAX_BRIGHTNESS_UNCONFIRMED_EXIT_CODE,
     SET_MAX_RETRY_DELAY_SECONDS,
     SET_MAX_STATUS_TIMEOUT_SECONDS,
-    SET_MAX_UNCONFIRMED_EXIT_CODE,
     max_attempts_for_destination,
     set_max_status_rejection_reason,
+    unicast_status_rejection_reason,
 )
 from .state import (
     StateError,
@@ -343,6 +351,44 @@ class SenderElement(dbus.service.Object):
             self.runtime.on_set_max_status(source_int)
             return
 
+        if is_get_max_brightness_status(payload):
+            if (
+                self.runtime.args.command not in ("get-max", "set-max")
+                or not self.runtime.get_max_started
+            ):
+                print(
+                    "Ignoring SANlight GetMaxBrightness status because no "
+                    "readback transaction is active."
+                )
+                return
+            try:
+                response_destination = int(destination)
+            except (TypeError, ValueError):
+                response_destination = None
+            reason = unicast_status_rejection_reason(
+                source=source_int,
+                key_index=int(key_index),
+                response_destination=response_destination,
+                requested_destination=self.runtime.args.destination,
+                expected_app_index=self.runtime.control.app_index,
+                sender_unicast=self.runtime.sender_unicast,
+                node_addresses=self.runtime.control.sanlight_nodes,
+            )
+            if reason is not None:
+                print(f"Ignoring unrelated SANlight 0x09 status: {reason}.")
+                return
+            try:
+                value = get_max_brightness_status_value(payload)
+            except ValueError as exc:
+                self.runtime.get_max_malformed_status_seen = True
+                print(
+                    "Ignoring malformed SANlight GetMaxBrightness status "
+                    f"from 0x{source_int:04X}: {exc}; raw={payload.hex()}."
+                )
+                return
+            self.runtime.on_get_max_status(source_int, value)
+            return
+
         if is_set_uptime_status(payload):
             params = set_uptime_status_parameters(payload)
             detail = f"src=0x{source_int:04X} parameters={params.hex()}"
@@ -443,6 +489,10 @@ class BluezRuntime:
         self.set_max_attempt = 0
         self.set_max_max_attempts = 0
         self.set_max_status_sources: set[int] = set()
+        self.get_max_started = False
+        self.get_max_attempt = 0
+        self.get_max_status: tuple[int, int] | None = None
+        self.get_max_malformed_status_seen = False
         self.network_transmit_status: tuple[int, int, int, int] | None = None
         self.live_status: tuple[int, bytes] | None = None
         self.live_attempt = 0
@@ -509,6 +559,7 @@ class BluezRuntime:
                 self.start_setup()
             elif self.args.command in (
                 "get-live",
+                "get-max",
                 "get-net-tx-sender",
                 "show-sender-state",
                 "set-max",
@@ -994,6 +1045,8 @@ class BluezRuntime:
             self.show_sender_state()
         elif self.args.command == "get-live":
             self.send_get_live()
+        elif self.args.command == "get-max":
+            self.start_get_max_readback()
         elif self.args.command == "set-max":
             self.send_max_brightness()
         elif self.args.command in ("set-uptime", "set-time", "sync-now"):
@@ -1275,14 +1328,10 @@ class BluezRuntime:
             f"(vendor opcode 0x07) from 0x{source:04X}."
         )
         if self.args.destination in self.control.sanlight_nodes:
-            self.finish(
-                "SET-MAX CONFIRMED. Matching SANlight 0x07 status received "
-                f"from 0x{source:04X} after attempt {self.set_max_attempt}/"
-                f"{self.set_max_max_attempts}."
-            )
+            self.start_get_max_readback()
 
     def finish_or_retry_set_max(self, attempt: int) -> None:
-        if self.finished or attempt != self.set_max_attempt:
+        if self.finished or attempt != self.set_max_attempt or self.get_max_started:
             return
 
         if self.args.destination in self.control.groups:
@@ -1297,11 +1346,7 @@ class BluezRuntime:
             return
 
         if self.set_max_status_sources:
-            source = min(self.set_max_status_sources)
-            self.finish(
-                "SET-MAX CONFIRMED. Matching SANlight 0x07 status received "
-                f"from 0x{source:04X}."
-            )
+            self.start_get_max_readback()
             return
 
         if self.set_max_attempt < self.set_max_max_attempts:
@@ -1313,19 +1358,200 @@ class BluezRuntime:
             self.timeout(SET_MAX_RETRY_DELAY_SECONDS, self.retry_set_max)
             return
 
-        self.finish(
-            "SET-MAX UNCONFIRMED. BlueZ accepted "
-            f"{self.set_max_max_attempts} transmissions, but no matching SANlight "
-            f"0x07 status was received from 0x{self.args.destination:04X}. "
-            "The dimmer may still have applied the value; reconnect the SANlight "
-            "app to verify it.",
-            SET_MAX_UNCONFIRMED_EXIT_CODE,
+        print(
+            "No matching SANlight 0x07 status was received after the bounded "
+            "write attempts. Starting read-only GetMaxBrightness verification; "
+            "the write may still have succeeded."
         )
+        self.start_get_max_readback()
 
     def retry_set_max(self) -> None:
-        if self.finished or self.set_max_status_sources:
+        if self.finished or self.set_max_status_sources or self.get_max_started:
             return
         self.send_max_brightness()
+
+    def start_get_max_readback(self) -> None:
+        if self.finished or self.get_max_started:
+            return
+        if self.sender_node is None:
+            self.fail("Canonical sender Node1 interface is unavailable")
+            return
+        if self.args.destination not in self.control.sanlight_nodes:
+            self.fail("GetMaxBrightness readback requires a unicast lamp node")
+            return
+
+        self.get_max_started = True
+        self.get_max_attempt = 0
+        self.get_max_status = None
+        self.get_max_malformed_status_seen = False
+        self.get_max_retry_pending = False
+
+        if self.args.command == "set-max":
+            ack_text = (
+                "matching 0x07 acknowledgement received"
+                if self.set_max_status_sources
+                else "no matching 0x07 acknowledgement received"
+            )
+            print(
+                "Starting read-only GetMaxBrightness verification "
+                f"({ack_text})."
+            )
+        else:
+            print("Starting read-only GetMaxBrightness query.")
+
+        self.send_get_max_brightness()
+
+    def send_get_max_brightness(self) -> None:
+        if self.finished:
+            return
+        if self.sender_node is None:
+            self.fail("Canonical sender Node1 interface is unavailable")
+            return
+
+        self.get_max_attempt += 1
+        attempt = self.get_max_attempt
+        payload = build_get_max_brightness_pdu()
+        description = validate_destination(self.control, self.args.destination)
+        action = (
+            "verification" if self.args.command == "set-max" else "query"
+        )
+        print(
+            f"Sending read-only GetMaxBrightness {action} attempt "
+            f"{attempt}/{GET_MAX_MAX_ATTEMPTS} to "
+            f"0x{self.args.destination:04X} ({description}); PDU={payload.hex()}"
+        )
+        self.sender_node.Send(
+            dbus.ObjectPath(SENDER_ELEMENT_PATH),
+            dbus.UInt16(self.args.destination),
+            dbus.UInt16(self.control.app_index),
+            empty_options(),
+            byte_array(payload),
+            reply_handler=lambda current_attempt=attempt: self.on_get_max_send_accepted(
+                current_attempt
+            ),
+            error_handler=lambda error: self.fail(
+                f"Canonical sender Node1.Send GetMaxBrightness failed: {error}"
+            ),
+        )
+
+    def on_get_max_send_accepted(self, attempt: int) -> None:
+        if self.finished:
+            return
+        print(
+            "GetMaxBrightness accepted for Mesh transmission "
+            f"(attempt {attempt}/{GET_MAX_MAX_ATTEMPTS})."
+        )
+        self.timeout(
+            GET_MAX_STATUS_TIMEOUT_SECONDS,
+            lambda current_attempt=attempt: self.finish_or_retry_get_max(
+                current_attempt
+            ),
+        )
+
+    def on_get_max_status(self, source: int, value: int) -> None:
+        if self.finished:
+            return
+        self.get_max_status = (source, value)
+        print(
+            "Received matching SANlight GetMaxBrightness status "
+            f"(vendor opcode 0x09) from 0x{source:04X}: {value}%."
+        )
+
+        if self.args.command == "get-max":
+            self.finish(
+                f"GET-MAX COMPLETE. Node 0x{source:04X} reports "
+                f"MaxBrightness {value}%."
+            )
+            return
+
+        if value == self.args.percent:
+            ack_text = (
+                "matching 0x07 acknowledgement was also received"
+                if self.set_max_status_sources
+                else "0x07 acknowledgement was not observed"
+            )
+            self.finish(
+                f"SET-MAX VERIFIED. Node 0x{source:04X} reports "
+                f"MaxBrightness {value}% as requested; {ack_text}."
+            )
+            return
+
+        if self.get_max_attempt < GET_MAX_MAX_ATTEMPTS:
+            print(
+                f"Readback mismatch after attempt {self.get_max_attempt}/"
+                f"{GET_MAX_MAX_ATTEMPTS}: requested {self.args.percent}%, "
+                f"reported {value}%. Retrying the read-only query in "
+                f"{GET_MAX_RETRY_DELAY_SECONDS} second."
+            )
+            self.get_max_status = None
+            self.schedule_get_max_retry()
+            return
+
+        self.finish(
+            f"SET-MAX VERIFICATION MISMATCH. Node 0x{source:04X} reports "
+            f"MaxBrightness {value}%, but {self.args.percent}% was requested.",
+            MAX_BRIGHTNESS_MISMATCH_EXIT_CODE,
+        )
+
+    def finish_or_retry_get_max(self, attempt: int) -> None:
+        if self.finished or attempt != self.get_max_attempt:
+            return
+        if self.get_max_status is not None:
+            return
+
+        if self.get_max_attempt < GET_MAX_MAX_ATTEMPTS:
+            detail = (
+                " A malformed matching status was observed and ignored."
+                if self.get_max_malformed_status_seen
+                else ""
+            )
+            print(
+                "No valid matching SANlight 0x09 status after "
+                f"{GET_MAX_STATUS_TIMEOUT_SECONDS} seconds.{detail} "
+                f"Retrying the read-only query in "
+                f"{GET_MAX_RETRY_DELAY_SECONDS} second."
+            )
+            self.schedule_get_max_retry()
+            return
+
+        malformed_text = (
+            " At least one malformed matching 0x09 status was ignored."
+            if self.get_max_malformed_status_seen
+            else ""
+        )
+        if self.args.command == "get-max":
+            self.finish(
+                "GET-MAX UNCONFIRMED. BlueZ accepted the read-only query, but "
+                f"no valid matching 0x09 status was received after "
+                f"{GET_MAX_MAX_ATTEMPTS} attempts.{malformed_text}",
+                MAX_BRIGHTNESS_UNCONFIRMED_EXIT_CODE,
+            )
+            return
+
+        ack_text = (
+            "A matching 0x07 acknowledgement was received, but "
+            if self.set_max_status_sources
+            else "No matching 0x07 acknowledgement was received, and "
+        )
+        self.finish(
+            f"SET-MAX UNVERIFIED. {ack_text}no valid GetMaxBrightness "
+            f"readback was received after {GET_MAX_MAX_ATTEMPTS} attempts."
+            f"{malformed_text} Reconnect the SANlight app to verify the value.",
+            MAX_BRIGHTNESS_UNCONFIRMED_EXIT_CODE,
+        )
+
+    def schedule_get_max_retry(self) -> None:
+        if self.finished or self.get_max_retry_pending:
+            return
+        self.get_max_retry_pending = True
+        self.timeout(GET_MAX_RETRY_DELAY_SECONDS, self.retry_get_max)
+
+    def retry_get_max(self) -> None:
+        if self.finished:
+            return
+        self.get_max_retry_pending = False
+        self.get_max_status = None
+        self.send_get_max_brightness()
 
     def start_leave_sender(self) -> None:
         state = self.load_sender_state()

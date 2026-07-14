@@ -36,16 +36,24 @@ State writes must remain atomic. `.state/` is mode `0700`; JSON state files are 
 - `0`, `1..19`, negative values and values above `100` must be rejected before D-Bus.
 - `build_set_max_brightness_pdu()` must independently enforce the same range.
 - Unicast `set-max` may retry the exact same idempotent value once after a lost
-  status, but must never perform an unbounded retry loop.
-- A `0x07` status confirms unicast `set-max` only when source node, AppKey index
-  and response destination match the active transaction.
-- Two locally accepted sends without a matching status return exit code `3`
-  (`SET-MAX UNCONFIRMED`); this does not prove that the lamp rejected the write.
+  `0x07` acknowledgement, but must never perform an unbounded write loop.
+- A `0x07` status counts only when source node, AppKey index and response
+  destination match the active transaction. It is an acknowledgement, not the
+  final configured-value proof.
+- Every unicast `set-max` must finish with a read-only GetMaxBrightness query. A
+  valid `0x09` response must come from the requested node, use the expected
+  AppKey, target the canonical sender, contain exactly one byte and report a
+  value in `20..100`.
+- Readback may retry once. A matching value returns `0`; missing readback returns
+  `3`; a persistent valid mismatch returns `4`. Readback retries must never
+  trigger additional writes.
+- Standalone `get-max` is read-only and follows the same strict status matching
+  and bounded retry rules.
 - Group `set-max` is transmitted once because member responses cannot establish
-  group-wide confirmation.
+  group-wide confirmation; automatic group-wide readback is not claimed.
 - `0xFFFF` is rejected.
 - Destinations must exist in the CDB.
-- `get-live`, `get-net-tx`, `set-time`, `set-uptime` and targeted `sync-now` require unicast nodes.
+- `get-live`, `get-max`, `get-net-tx`, `set-time`, `set-uptime` and targeted `sync-now` require unicast nodes.
 - Destination `all` expands to individually detected SANlight vendor-model nodes; it is not a Mesh all-nodes broadcast.
 - Setup must never call `set-max`, `set-time`, `set-uptime` or `sync-now`.
 - Setup may configure the local canonical sender and set its Bluetooth Mesh Default TTL to 5.
@@ -58,7 +66,9 @@ sanlight_protocol.py              compatibility re-exports
 sanlight_mesh/
   cli.py                          argparse, offline preflight and redacted output
   cdb.py                          strict CDB loading and destination validation
-  protocol.py                     pure PDU and clock helpers
+  protocol.py                     pure PDU, status decoding and clock helpers
+  max_brightness_policy.py        bounded write/readback and status-match policy
+  set_max_policy.py               compatibility re-export for the v6 module name
   state.py                        private atomic token-state storage
   locking.py                      exclusive single-process runtime guard
   bluez_runtime.py                D-Bus applications, elements and workflows
@@ -98,7 +108,8 @@ Company ID: `0x0A8B`, encoded little-endian as `8B 0A` after a three-octet vendo
 - SetMaxBrightness: opcode `0x06`, access prefix `C6 8B 0A`, one percent byte
 - SetMaxBrightness Status: `C7 8B 0A`
 - GetMaxBrightness: `C8 8B 0A`
-- GetMaxBrightness Status: `C9 8B 0A`
+- GetMaxBrightness Status: `C9 8B 0A <PERCENT>`; the validated form has
+  exactly one percentage byte
 - SetUptime: `CA 8B 0A` + uint32 little-endian milliseconds
 - SetUptime Status: `CB 8B 0A`
 - GetUptimeAndBrightness: `CC 8B 0A`

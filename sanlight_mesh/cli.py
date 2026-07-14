@@ -104,6 +104,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     get_live.add_argument("destination", type=parse_destination)
 
+    get_max = commands.add_parser(
+        "get-max",
+        help="read the configured MaxBrightness percentage from one unicast node",
+    )
+    get_max.add_argument("destination", type=parse_destination)
+
     get_net_tx = commands.add_parser(
         "get-net-tx", help="read Config Network Transmit via control identity"
     )
@@ -146,8 +152,9 @@ def build_parser() -> argparse.ArgumentParser:
     set_max = commands.add_parser(
         "set-max",
         help=(
-            "set MaxBrightness; safety range is strictly 20..100 and "
-            "unicast writes retry once when confirmation is lost"
+            "set MaxBrightness; safety range is strictly 20..100, unicast "
+            "writes retry once when acknowledgement is lost, then read back "
+            "the configured percentage"
         ),
     )
     set_max.add_argument("destination", type=parse_destination)
@@ -205,7 +212,12 @@ def _validate_node_destination(
 
 def validate_args(args: argparse.Namespace, control: MeshMaterial) -> None:
     args.iv_index = _validate_iv_index(args.iv_index)
-    if args.command in ("get-live", "get-net-tx", "get-net-tx-sender"):
+    if args.command in (
+        "get-live",
+        "get-max",
+        "get-net-tx",
+        "get-net-tx-sender",
+    ):
         _validate_node_destination(control, args.destination, args.command)
     elif args.command == "set-max":
         validate_destination(control, args.destination)

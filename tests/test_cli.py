@@ -42,6 +42,18 @@ class CliTest(unittest.TestCase):
                 self.assertIn("between 20 and 100", stderr)
                 self.assertNotIn("D-Bus", stderr)
 
+    def test_get_max_command_is_registered_and_unicast_only(self):
+        args = build_parser().parse_args(
+            ["--cdb", str(FIXTURE), "get-max", "0002"]
+        )
+        self.assertEqual(args.command, "get-max")
+        self.assertEqual(args.destination, 0x0002)
+
+        code, stdout, stderr = self.run_cli("get-max", "C000")
+        self.assertEqual(code, 2)
+        self.assertIn("unicast", stderr)
+        self.assertNotIn("D-Bus", stderr)
+
     def test_group_rejected_for_get_live(self):
         code, stdout, stderr = self.run_cli("get-live", "C000")
         self.assertEqual(code, 2)

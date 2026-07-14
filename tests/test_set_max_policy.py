@@ -1,10 +1,11 @@
 import unittest
 
-from sanlight_mesh.set_max_policy import (
+from sanlight_mesh.max_brightness_policy import (
     SET_MAX_GROUP_MAX_ATTEMPTS,
     SET_MAX_UNICAST_MAX_ATTEMPTS,
     max_attempts_for_destination,
     set_max_status_rejection_reason,
+    unicast_status_rejection_reason,
 )
 
 
@@ -55,6 +56,29 @@ class SetMaxPolicyTest(unittest.TestCase):
     def test_wrong_response_destination_is_rejected(self):
         reason = self.reason(response_destination=0x2400)
         self.assertIn("response destination", reason)
+
+    def test_get_max_unicast_status_matching_is_strict(self):
+        self.assertIsNone(
+            unicast_status_rejection_reason(
+                source=0x0003,
+                key_index=0,
+                response_destination=0x2800,
+                requested_destination=0x0003,
+                expected_app_index=0,
+                sender_unicast=0x2800,
+                node_addresses=self.NODES,
+            )
+        )
+        reason = unicast_status_rejection_reason(
+            source=0x0002,
+            key_index=0,
+            response_destination=0x2800,
+            requested_destination=0x0003,
+            expected_app_index=0,
+            sender_unicast=0x2800,
+            node_addresses=self.NODES,
+        )
+        self.assertIn("unexpected source", reason)
 
     def test_group_status_accepts_only_known_lamp_sources(self):
         self.assertIsNone(

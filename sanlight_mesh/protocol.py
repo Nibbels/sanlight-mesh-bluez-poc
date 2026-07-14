@@ -81,6 +81,22 @@ def get_max_brightness_status_parameters(data: bytes) -> bytes:
     return data[3:]
 
 
+def get_max_brightness_status_value(data: bytes) -> int:
+    """Decode a validated one-byte GetMaxBrightness status value.
+
+    Reverse engineering and the earlier working PoC indicate that opcode 0x09
+    carries exactly one MaxBrightness percentage byte. Be deliberately strict:
+    additional or missing bytes are a protocol anomaly, not silent confirmation.
+    """
+
+    parameters = get_max_brightness_status_parameters(data)
+    if len(parameters) != 1:
+        raise ValueError(
+            "SANlight GetMaxBrightness Status must contain exactly one value byte"
+        )
+    return validate_max_brightness(parameters[0])
+
+
 def build_get_uptime_brightness_pdu() -> bytes:
     return _vendor_opcode(SANLIGHT_GET_UPTIME_BRIGHTNESS_OPCODE)
 
