@@ -60,6 +60,35 @@ class CliTest(unittest.TestCase):
         self.assertEqual(args.command, "get-net-tx-sender")
         self.assertEqual(args.destination, 0x0002)
 
+    def test_show_sender_state_command_is_registered(self):
+        args = build_parser().parse_args(
+            ["--cdb", str(FIXTURE), "show-sender-state"]
+        )
+        self.assertEqual(args.command, "show-sender-state")
+
+    def test_recovery_requires_explicit_confirmation_before_system_access(self):
+        code, stdout, stderr = self.run_cli(
+            "recover-sequence", "--minimum", "0x100000"
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("--confirm-replay-recovery", stderr)
+        self.assertNotIn("systemctl", stderr)
+
+    def test_recovery_rejects_non_24_bit_value_in_parser(self):
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit):
+            build_parser().parse_args(
+                [
+                    "--cdb",
+                    str(FIXTURE),
+                    "recover-sequence",
+                    "--minimum",
+                    str((1 << 64) - 5),
+                    "--confirm-replay-recovery",
+                ]
+            )
+        self.assertIn("invalid parse_sequence_target value", stderr.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

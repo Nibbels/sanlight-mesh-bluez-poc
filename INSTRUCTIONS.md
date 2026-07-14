@@ -103,6 +103,19 @@ sudo python3 sanlight_canonical_sender_poc.py \
     get-net-tx <NODE_ADDRESS>
 ```
 
+Show the canonical sender's live non-secret BlueZ state after attaching it:
+
+```bash
+sudo python3 sanlight_canonical_sender_poc.py \
+    --cdb private/SANlightMesh.json \
+    show-sender-state
+```
+
+This prints only sender addresses, IV Index, IV Update flag, Sequence Number,
+remaining 24-bit sequence space, and seconds since Mesh traffic was last heard.
+It does not read `node.json` while the daemon is running and does not print keys
+or state tokens.
+
 ## Writing commands
 
 These commands intentionally change lamp state. They are never run by setup.
@@ -270,6 +283,133 @@ Obtain the current IV Index from the known working Mesh context. Do not guess. P
 sudo bash ./scripts/setup-all.sh --iv-index <VERIFIED_IV_INDEX>
 ```
 
+### Replay protection after a fresh SD card
+
+Bluetooth Mesh uses a **24-bit Sequence Number** (`0..0xFFFFFF`) together with
+the network-wide **32-bit IV Index**. The Sequence Number does not safely wrap
+to zero. Before it is exhausted, a standards-compliant Mesh performs an IV
+Update; after the network completes that procedure, nodes can use Sequence
+Number zero again under the new IV Index. This project does not initiate IV
+Update because that is a network-wide operation that has not yet been validated
+against SANlight dimmers.
+
+A fresh Raspberry Pi or deleted `/var/lib/bluetooth/mesh` state can recreate the
+same canonical sender unicast address with a low Sequence Number. Lamps that
+have already accepted higher values from that address may silently reject the
+new messages as replayed traffic. Power-cycling a lamp is not a reliable fix: a
+Mesh Replay Protection List is security state and is expected to survive power
+cycles. Losing the SANlight lamp clock after power loss is unrelated.
+
+Run the combined read-only diagnosis with one detected lamp node:
+
+```bash
+sudo bash ./scripts/diagnose-replay.sh 0002
+```
+
+The script performs two Config Network Transmit Gets:
+
+- control identity responds and canonical sender does not: likely reused-sender
+  replay state;
+- both respond: sender sequence state is accepted;
+- neither responds: investigate RF, IV Index, keys, service, and controller
+  ownership instead.
+
+The exact highest Sequence Number stored inside a lamp cannot be queried through
+a standard Bluetooth Mesh model or read from an ordinary BLE advertisement. A
+packet capture with Mesh keys can reveal the Sequence Number carried by a
+specific transmitted Network PDU, but not the receiver's internal replay limit.
+Do not expose Mesh keys merely to inspect this.
+
+#### Explicit local sequence recovery
+
+Only use this after the diagnostic reports that the control identity works while
+the canonical sender does not. Recovery advances the local sender to an
+**absolute minimum**; it never decrements or resets the value and never changes
+lamp time or brightness. The tested recovery target for this project is
+`0x100000`:
+
+```bash
+sudo python3 sanlight_canonical_sender_poc.py \
+    --cdb private/SANlightMesh.json \
+    recover-sequence \
+    --minimum 0x100000 \
+    --confirm-replay-recovery
+```
+
+The command:
+
+1. requires root and the validated Mesh service to be active;
+2. takes the exclusive project runtime lock;
+3. stops `bluetooth-meshd` before reading or writing its database;
+4. verifies the CDB sender UUID and unicast address;
+5. creates a mode-`0600` backup under
+   `/root/sanlight-mesh-sequence-backups`;
+6. atomically advances `sequenceNumber` only when the existing value is lower;
+7. restarts the service even when recovery fails.
+
+The protocol maximum is `0xFFFFFF`, not a 32-bit or 64-bit counter. A value such
+as `2^64 - 5` cannot be represented in a Bluetooth Mesh Network PDU, and the
+recovery parser rejects it before any service or file is touched. Sequence Number
+must never overflow to zero under the same IV Index. As an additional project
+policy, recovery refuses targets above `0xBFFFFF`, leaving the final range
+untouched for a proper IV Update or a Mesh rebuild. Repeating the same
+`--minimum` does not add the value again; it is an absolute lower bound. Do not
+keep guessing progressively larger targets: use the tested `0x100000` once, then
+stop and investigate if the sender is still rejected. Never edit `node.json` while
+`bluetooth-meshd` is running.
+
+The protected backup contains the complete local BlueZ node database, including
+private Mesh material. Do not display, copy into a chat, commit, or publish it.
+
+After recovery, verify with:
+
+```bash
+sudo bash ./scripts/diagnose-replay.sh 0002
+
+sudo python3 sanlight_canonical_sender_poc.py \
+    --cdb private/SANlightMesh.json \
+    get-live 0002
+```
+
+#### Destructive reset to a fresh sequence space
+
+There is no safe local-only command that resets the same sender to Sequence
+Number zero under the same IV Index while receivers retain their replay state.
+The standards-based non-destructive solution is a proper network-wide IV Update.
+If a broken or compromised sender has already caused receivers to remember
+`0xFFFFFF`, no larger 24-bit value exists: local sequence advancement cannot
+recover that condition. Stop the offending sender, then perform a coordinated IV
+Update or rebuild the Mesh. This project deliberately does not fake an IV Index
+change or wrap the counter.
+
+Until IV Update is validated for SANlight, the final recovery path is to rebuild
+the SANlight Mesh.
+
+SANlight's official Bluetooth Dimmer manual documents a factory reset by holding
+the **red side of the magnetic key** against the dimmer's flat surface for at
+least **15 seconds**. The reset removes that dimmer from the SANlight Mesh; it
+becomes visible again and cannot dim the lamp until paired. The app also offers a
+reset while connected. See the official manual:
+
+<https://www.sanlight.com/wp-content/uploads/2023/03/sanlight-bt-dimmer-manual-2023-en.pdf>
+
+Resetting only one dimmer clears only that device's local state. It does not make
+Sequence Number zero safe for other lamps that still remember the old sender.
+For a complete fresh sequence space, reset and reprovision every lamp that has
+accepted traffic from the reused sender, create/pair a new Mesh in the SANlight
+app, export a new `SANlightMesh.json`, replace the private CDB on the Pi, and then
+perform an explicit local BlueZ state reset during setup. This is destructive:
+old groups, schedules, addresses, keys, CDB data, and Pi state are no longer
+authoritative. Back up the existing SANlight export and local state before
+starting. A normal lamp power cycle is not a factory reset.
+
+Authoritative references:
+
+- [Bluetooth Mesh Protocol specification](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/MshPRT_v1.1/out/en/index-en.html)
+- [Bluetooth Mesh Security Overview](https://www.bluetooth.com/wp-content/uploads/2025/04/MeshSecurityOverview_INFO_v1.0-1.pdf)
+- [BlueZ Mesh D-Bus API](https://github.com/bluez/bluez/blob/master/doc/mesh-api.txt)
+- [SANlight Bluetooth Dimmer operating instructions](https://www.sanlight.com/wp-content/uploads/2023/03/sanlight-bt-dimmer-manual-2023-en.pdf)
+
 ### A command transmits but no status is received
 
 Bluetooth Mesh status replies are not guaranteed. Check:
@@ -290,4 +430,4 @@ Run all tests without Mesh hardware:
 ./scripts/run-tests.sh
 ```
 
-The suite checks protocol bytes, brightness safety, CDB consistency, destination restrictions, state permissions and atomic writes, redacted output, CLI prevalidation and token-output patterns.
+The suite checks protocol bytes, brightness safety, CDB consistency, destination restrictions, state permissions and atomic writes, redacted output, CLI prevalidation, replay-diagnostic safety, 24-bit sequence bounds, forward-only recovery, protected backups and token-output patterns.

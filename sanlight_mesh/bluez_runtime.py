@@ -42,6 +42,7 @@ from .protocol import (
     validate_uptime_milliseconds,
     validate_uptime_seconds,
 )
+from .sequence_recovery import MESH_SEQUENCE_MAX, RECOVERY_TARGET_MAX
 from .state import (
     StateError,
     read_state,
@@ -57,6 +58,7 @@ MESH_MGMT_IFACE = "org.bluez.mesh.Management1"
 MESH_APPLICATION_IFACE = "org.bluez.mesh.Application1"
 MESH_ELEMENT_IFACE = "org.bluez.mesh.Element1"
 DBUS_OBJECT_MANAGER_IFACE = "org.freedesktop.DBus.ObjectManager"
+DBUS_PROPERTIES_IFACE = "org.freedesktop.DBus.Properties"
 
 CONTROL_APP_ROOT = "/com/nibbels/sanlight_mesh_poc_provisioner"
 CONTROL_ELEMENT_PATH = CONTROL_APP_ROOT + "/ele00"
@@ -400,6 +402,7 @@ class BluezRuntime:
         self.control_management: dbus.Interface | None = None
         self.sender_node: dbus.Interface | None = None
         self.sender_management: dbus.Interface | None = None
+        self.sender_properties: dbus.Interface | None = None
         self.sender_bound = False
         self.sender_remote_key_ready = False
         self.app_key_added = False
@@ -475,6 +478,7 @@ class BluezRuntime:
             elif self.args.command in (
                 "get-live",
                 "get-net-tx-sender",
+                "show-sender-state",
                 "set-max",
                 "set-uptime",
                 "set-time",
@@ -786,6 +790,7 @@ class BluezRuntime:
         node_object = self.bus.get_object(MESH_SERVICE, str(node_path))
         self.sender_node = dbus.Interface(node_object, MESH_NODE_IFACE)
         self.sender_management = dbus.Interface(node_object, MESH_MGMT_IFACE)
+        self.sender_properties = dbus.Interface(node_object, DBUS_PROPERTIES_IFACE)
         self.sender_bound = self.configuration_has_binding(configuration)
         print(f"Canonical sender AppKey-0 vendor binding present: {self.sender_bound}")
         if self.args.command == "setup":
@@ -953,6 +958,8 @@ class BluezRuntime:
     def on_sender_ready(self) -> None:
         if self.args.command == "get-net-tx-sender":
             self.prepare_sender_network_transmit_probe()
+        elif self.args.command == "show-sender-state":
+            self.show_sender_state()
         elif self.args.command == "get-live":
             self.send_get_live()
         elif self.args.command == "set-max":
@@ -961,6 +968,46 @@ class BluezRuntime:
             self.send_set_uptime()
         else:
             self.fail(f"Unexpected command after sender attach: {self.args.command}")
+
+    def show_sender_state(self) -> None:
+        if self.sender_properties is None:
+            self.fail("Canonical sender D-Bus properties interface is unavailable")
+            return
+        try:
+            properties = dict(self.sender_properties.GetAll(MESH_NODE_IFACE))
+        except dbus.exceptions.DBusException as exc:
+            self.fail(f"Cannot read canonical sender Node1 properties: {exc}")
+            return
+
+        sequence = int(properties.get("SequenceNumber", 0))
+        if not 0 <= sequence <= MESH_SEQUENCE_MAX:
+            self.fail(
+                "Canonical sender reports an invalid SequenceNumber outside "
+                "the 24-bit Mesh range"
+            )
+            return
+        iv_index = int(properties.get("IvIndex", 0))
+        iv_update = bool(properties.get("IvUpdate", False))
+        last_heard = int(properties.get("SecondsSinceLastHeard", 0))
+        addresses = [int(value) for value in properties.get("Addresses", [])]
+        address_text = ", ".join(f"0x{value:04X}" for value in addresses) or "none"
+        remaining = max(0, MESH_SEQUENCE_MAX - sequence)
+
+        print("Canonical sender live BlueZ state (non-secret):")
+        print(f"  addresses={address_text}")
+        print(f"  ivIndex={iv_index}")
+        print(f"  ivUpdate={iv_update}")
+        print(f"  sequenceNumber={sequence} (0x{sequence:06X})")
+        print(f"  sequenceRemaining={remaining}")
+        print(f"  secondsSinceLastHeard={last_heard}")
+        if sequence > RECOVERY_TARGET_MAX:
+            print(
+                "WARNING: sequenceNumber is above this project's recovery safety "
+                "ceiling. Do not advance it further; plan a proper IV Update or "
+                "a destructive Mesh rebuild."
+            )
+        self.finish("SHOW-SENDER-STATE COMPLETE. No secret value was displayed.")
+
 
     def prepare_sender_network_transmit_probe(self) -> None:
         if self.sender_management is None:

@@ -177,6 +177,27 @@ The archive must not contain:
 
 Hardware claims require a Raspberry Pi test. Container/unit tests can validate syntax, CLI behavior, CDB parsing, bytes and filesystem safety, but cannot prove D-Bus timing, HCI ownership or RF reception.
 
+## Sequence continuity and replay recovery
+
+Bluetooth Mesh Sequence Number is 24-bit (`0..0xFFFFFF`), while IV Index is 32-bit and network-wide. Sequence Number must never wrap to zero under the same IV Index. A proper IV Update advances IV Index and permits sequence counters to restart; this project does not yet initiate IV Update because the SANlight network-wide behavior has not been validated.
+
+A clean SD-card test proved a real migration failure: control App-ID 1 at `0x2400` could exchange DeviceKey Config messages with lamp `0x0002`, while canonical sender App-ID 2 at `0x2800` received no reply over either DeviceKey or AppKey. Advancing only the stopped BlueZ sender `sequenceNumber` from a fresh low value to `0x100000` restored both `get-net-tx-sender` and SANlight `get-live`. This confirms persistent receiver Replay Protection List state for the reused source address.
+
+Project rules:
+
+- setup must not alter Sequence Number automatically;
+- use `scripts/diagnose-replay.sh NODE_ADDRESS` for the read-only two-identity probe;
+- use `show-sender-state` for live non-secret Node1 IV/sequence properties;
+- `recover-sequence` is explicit, root-only, forward-only, backed up, atomic, and requires `--confirm-replay-recovery`;
+- recovery targets are valid only in `1..0xBFFFFF`; protocol maximum remains `0xFFFFFF`;
+- never edit BlueZ `node.json` while `bluetooth-meshd` is running;
+- never claim that a lamp power cycle clears replay state;
+- a remembered `0xFFFFFF` cannot be outrun; stop the source, then use coordinated IV Update or a complete Mesh/CDB rebuild;
+- the destructive fallback is SANlight dimmer factory reset plus complete Mesh/CDB rebuild;
+- do not implement manual IV Index increments as a shortcut. IV Update is a coordinated network procedure.
+
+The receiver's exact RPL threshold is not exposed by standard Config Models or ordinary advertisements. A key-assisted packet capture can reveal a transmitted Network PDU's sequence, not a lamp's internal stored threshold.
+
 ## Next sensible milestones
 
 After the clean-image installation is validated:

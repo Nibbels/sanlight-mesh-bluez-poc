@@ -33,6 +33,21 @@ class SourceSecurityTest(unittest.TestCase):
             "secret variable referenced by print(): " + "; ".join(violations),
         )
 
+    def test_sequence_recovery_never_prints_node_json_content(self):
+        source = (ROOT / "sanlight_mesh" / "sequence_recovery.py").read_text(
+            encoding="utf-8"
+        )
+        tree = ast.parse(source)
+        print_calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "print"
+        ]
+        self.assertEqual(print_calls, [])
+
+
 class SetupSafetyTest(unittest.TestCase):
     def test_setup_contains_no_lamp_write_command(self):
         setup = (ROOT / "scripts" / "setup-all.sh").read_text(encoding="utf-8")
@@ -64,6 +79,16 @@ class SetupSafetyTest(unittest.TestCase):
         self.assertIn("PYTHONDONTWRITEBYTECODE=1", runner)
         self.assertIn("--exclude-dir=.state", runner)
         self.assertIn("--exclude-dir=private", runner)
+
+    def test_replay_diagnostic_contains_only_read_only_mesh_commands(self):
+        script = (ROOT / "scripts" / "diagnose-replay.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("get-net-tx", script)
+        self.assertIn("get-net-tx-sender", script)
+        for command in ("set-max", "set-time", "set-uptime", "sync-now"):
+            self.assertNotIn(command, script)
+
 
 if __name__ == "__main__":
     unittest.main()

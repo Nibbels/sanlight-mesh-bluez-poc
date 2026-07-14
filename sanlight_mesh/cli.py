@@ -26,6 +26,11 @@ from .protocol import (
 )
 from .locking import LockError, exclusive_runtime_lock
 from .state import StateError
+from .sequence_recovery import (
+    SequenceRecoveryError,
+    parse_sequence_target,
+    recover_sender_sequence,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_STATE_DIR = PROJECT_ROOT / ".state"
@@ -112,6 +117,31 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     get_net_tx_sender.add_argument("destination", type=parse_destination)
+
+    commands.add_parser(
+        "show-sender-state",
+        help="show live non-secret sender IV/sequence state from BlueZ",
+    )
+
+    recover_sequence = commands.add_parser(
+        "recover-sequence",
+        help=(
+            "explicitly advance a reused sender sequence after replay diagnosis; "
+            "never resets it"
+        ),
+    )
+    recover_sequence.add_argument(
+        "--minimum",
+        required=True,
+        type=parse_sequence_target,
+        metavar="NUMBER",
+        help="absolute minimum sender sequence, decimal or 0x-prefixed",
+    )
+    recover_sequence.add_argument(
+        "--confirm-replay-recovery",
+        action="store_true",
+        help="confirm that replay diagnosis was completed and local BlueZ state may be changed",
+    )
 
     set_max = commands.add_parser(
         "set-max", help="set MaxBrightness; safety range is strictly 20..100"
@@ -230,6 +260,42 @@ def _load_material(args: argparse.Namespace) -> tuple[MeshMaterial, MeshMaterial
     return control, sender
 
 
+def _run_sequence_recovery(
+    args: argparse.Namespace, sender: MeshMaterial
+) -> int:
+    if not args.confirm_replay_recovery:
+        raise ValueError(
+            "recover-sequence requires --confirm-replay-recovery after the read-only "
+            "replay diagnosis"
+        )
+    lock_file = args.sender_state.parent / "runtime.lock"
+    try:
+        with exclusive_runtime_lock(lock_file):
+            result = recover_sender_sequence(
+                provisioner_uuid=sender.provisioner.uuid,
+                expected_unicast=sender.provisioner.unicast,
+                minimum=args.minimum,
+            )
+    except (SequenceRecoveryError, LockError) as exc:
+        raise CliError(str(exc)) from exc
+
+    if result.changed:
+        print(
+            f"Canonical sender 0x{sender.provisioner.unicast:04X}: sequenceNumber "
+            f"advanced from {result.previous} to {result.current}."
+        )
+        print(f"Protected backup created at: {result.backup_path}")
+        print("The backup contains private BlueZ state; do not display or upload it.")
+    else:
+        print(
+            f"Canonical sender 0x{sender.provisioner.unicast:04X}: existing "
+            f"sequenceNumber {result.current} already satisfies the requested minimum."
+        )
+    print("No key, DeviceKey, or BlueZ token value was displayed.")
+    print("Run diagnose-replay or get-live again to verify remote acceptance.")
+    return 0
+
+
 def _run_runtime(
     args: argparse.Namespace, control: MeshMaterial, sender: MeshMaterial
 ) -> int:
@@ -281,6 +347,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "list-nodes":
             print_node_overview(control, args.cdb)
             return 0
+
+        if args.command == "recover-sequence":
+            return _run_sequence_recovery(args, sender)
 
         if args.command == "setup" and args.iv_index is None:
             raise ValueError(

@@ -78,4 +78,6 @@ Replace `0002` with the `NODE_ADDRESS` shown for the lamp you want to read. This
 
 A successful response reports SANlight status opcode `0x0D`, lamp milliseconds since midnight and the raw brightness-related value.
 
+If a clean SD-card installation transmits but receives no status, do not factory-reset lamps or edit BlueZ files immediately. Continue with the read-only replay-protection diagnosis in [INSTRUCTIONS.md](INSTRUCTIONS.md#replay-protection-after-a-fresh-sd-card). A reused sender identity can be rejected when its fresh local Sequence Number is lower than the value remembered by the lamps.
+
 For all writing commands, service operation and troubleshooting, continue with [INSTRUCTIONS.md](INSTRUCTIONS.md).
