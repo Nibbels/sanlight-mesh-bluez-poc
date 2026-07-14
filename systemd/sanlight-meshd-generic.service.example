@@ -1,0 +1,16 @@
+[Unit]
+Description=SANlight BlueZ Mesh Daemon using raw HCI generic I/O
+After=dbus.service
+Wants=dbus.service
+Conflicts=bluetooth.service bluetooth-mesh.service
+
+[Service]
+Type=simple
+ExecStartPre=/usr/sbin/rfkill unblock bluetooth
+ExecStartPre=/bin/sh -c '/usr/bin/hciconfig hci0 down 2>/dev/null || true'
+ExecStart=/usr/libexec/bluetooth/bluetooth-meshd --io generic:hci0 --nodetach --debug
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

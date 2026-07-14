@@ -1,0 +1,11 @@
+# Secrets and local BlueZ state
+private/SANlightMesh.json
+private/*.json
+.sanlight-mesh-poc-*-state.json
+
+# Logs / caches
+*.log
+__pycache__/
+*.pyc
+*.tgz
+*.zip
