@@ -47,5 +47,16 @@ class SetupSafetyTest(unittest.TestCase):
         for path in files:
             self.assertNotIn("/usr/bin/rfkill", path.read_text(encoding="utf-8"))
 
+    def test_service_readiness_checks_network_interface(self):
+        installer = (ROOT / "scripts" / "install-service.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("busctl introspect", installer)
+        self.assertIn("org.bluez.mesh.Network1", installer)
+        self.assertNotIn(
+            "busctl tree org.bluez.mesh /org/bluez/mesh",
+            installer,
+        )
+
 if __name__ == "__main__":
     unittest.main()

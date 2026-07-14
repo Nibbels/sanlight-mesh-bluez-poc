@@ -24,13 +24,13 @@ The `set-max` command has two independent range checks. Only integer values `20.
 Run the environment check:
 
 ```bash
-sudo bash ./scripts/sanlight-env-check.sh
+sudo ./scripts/sanlight-env-check.sh
 ```
 
 The unsupported-platform override exists for development only:
 
 ```bash
-sudo bash ./scripts/sanlight-env-check.sh --allow-unsupported
+sudo ./scripts/sanlight-env-check.sh --allow-unsupported
 ```
 
 ## Installation behavior
@@ -85,12 +85,14 @@ sudo python3 sanlight_canonical_sender_poc.py \
     list-nodes
 ```
 
+The first column of the lamp table is named `NODE_ADDRESS`. It is the four-digit unicast address used by commands such as `get-live`, for example `0002` or `0003`. Group addresses such as `C000` are listed separately and cannot be used by read-only node commands.
+
 Read lamp time and brightness from one unicast lamp node:
 
 ```bash
 sudo python3 sanlight_canonical_sender_poc.py \
     --cdb private/SANlightMesh.json \
-    get-live <NODE>
+    get-live <NODE_ADDRESS>
 ```
 
 Read the Bluetooth Mesh Config Network Transmit setting from one unicast node:
@@ -98,7 +100,7 @@ Read the Bluetooth Mesh Config Network Transmit setting from one unicast node:
 ```bash
 sudo python3 sanlight_canonical_sender_poc.py \
     --cdb private/SANlightMesh.json \
-    get-net-tx <NODE>
+    get-net-tx <NODE_ADDRESS>
 ```
 
 ## Writing commands
@@ -110,7 +112,7 @@ Set MaxBrightness for one CDB node or group:
 ```bash
 sudo python3 sanlight_canonical_sender_poc.py \
     --cdb private/SANlightMesh.json \
-    set-max <NODE_OR_GROUP> 68
+    set-max <NODE_OR_GROUP_ADDRESS> 68
 ```
 
 Set one lamp clock to an explicit local clock value:
@@ -118,7 +120,7 @@ Set one lamp clock to an explicit local clock value:
 ```bash
 sudo python3 sanlight_canonical_sender_poc.py \
     --cdb private/SANlightMesh.json \
-    set-time <NODE> 10:38:30
+    set-time <NODE_ADDRESS> 10:38:30
 ```
 
 Set all detected SANlight lamp nodes to an explicit clock value:
@@ -142,7 +144,7 @@ Synchronize one node with an optional timing offset:
 ```bash
 sudo python3 sanlight_canonical_sender_poc.py \
     --cdb private/SANlightMesh.json \
-    sync-now <NODE> --offset-ms 250
+    sync-now <NODE_ADDRESS> --offset-ms 250
 ```
 
 The Raspberry Pi timezone must be correct before `sync-now`:
@@ -181,7 +183,7 @@ sudo systemctl restart sanlight-meshd-generic.service
 Verify the D-Bus object:
 
 ```bash
-busctl tree org.bluez.mesh /org/bluez/mesh
+busctl introspect org.bluez.mesh /org/bluez/mesh org.bluez.mesh.Network1
 ```
 
 The service launcher discovers `rfkill` through `PATH`; it does not assume the incorrect `/usr/bin/rfkill` path. On Debian trixie, the package is installed by `setup-all.sh`.
@@ -193,13 +195,13 @@ Before updating, make sure the CDB and state files remain ignored:
 ```bash
 git status --short
 git pull --ff-only
-bash ./scripts/run-tests.sh
+./scripts/run-tests.sh
 ```
 
 Reinstall the service definition after changes to `scripts/` or `systemd/`:
 
 ```bash
-sudo bash ./scripts/install-service.sh
+sudo ./scripts/install-service.sh
 ```
 
 This does not reset Mesh state unless `--reset-mesh-state` is explicitly supplied.
@@ -229,7 +231,7 @@ command -v rfkill
 Then reinstall the service:
 
 ```bash
-sudo bash ./scripts/install-service.sh
+sudo ./scripts/install-service.sh
 ```
 
 ### `org.bluez.mesh` is unavailable
@@ -285,7 +287,7 @@ Bluetooth Mesh status replies are not guaranteed. Check:
 Run all tests without Mesh hardware:
 
 ```bash
-bash ./scripts/run-tests.sh
+./scripts/run-tests.sh
 ```
 
 The suite checks protocol bytes, brightness safety, CDB consistency, destination restrictions, state permissions and atomic writes, redacted output, CLI prevalidation and token-output patterns.

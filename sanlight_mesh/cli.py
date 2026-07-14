@@ -185,8 +185,13 @@ def print_node_overview(control: MeshMaterial, cdb_path: Path) -> None:
     print(f"CDB file: {cdb_path}")
     print("\nDetected SANlight lamp nodes (unicast targets):")
     if control.sanlight_nodes:
+        print("  NODE_ADDRESS  HEX_ADDRESS  NAME")
         for address, name in sorted(control.sanlight_nodes.items()):
-            print(f"  {address:04X}  0x{address:04X}  {name}")
+            print(f"  {address:04X}          0x{address:04X}       {name}")
+        print(
+            "\nNODE_ADDRESS is the four-digit unicast value in the first column."
+        )
+        print("Use a node address, not a CDB group address, with get-live.")
     else:
         print("  none detected")
     print("\nGroups from CDB:")
@@ -195,7 +200,7 @@ def print_node_overview(control: MeshMaterial, cdb_path: Path) -> None:
             print(f"  {address:04X}  0x{address:04X}  {name}")
     else:
         print("  none")
-    print("\nRead-only verification:")
+    print("\nRead-only verification example:")
     if control.sanlight_nodes:
         first = min(control.sanlight_nodes)
         print(

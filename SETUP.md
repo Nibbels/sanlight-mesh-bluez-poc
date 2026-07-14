@@ -56,13 +56,25 @@ Do not assume `0` for a different Mesh. The setup aborts before changing service
 
 ## 4. Perform a read-only verification
 
-The setup prints the detected lamp node addresses. Read one unicast node:
+At the end, setup prints a table of detected SANlight lamp nodes. For example:
+
+```text
+Detected SANlight lamp nodes (unicast targets):
+  NODE_ADDRESS  HEX_ADDRESS  NAME
+  0002          0x0002       Example lamp
+```
+
+`NODE_ADDRESS` means the four-digit unicast address in the first column. It is not the literal word `NODE_ADDRESS`. Choose one address printed by your own setup, such as `0002` or `0003`. Do not use a group address such as `C000` or `C001` with `get-live`.
+
+For example, when your table contains node address `0002`, run:
 
 ```bash
 sudo python3 sanlight_canonical_sender_poc.py \
     --cdb private/SANlightMesh.json \
-    get-live <NODE>
+    get-live 0002
 ```
+
+Replace `0002` with the `NODE_ADDRESS` shown for the lamp you want to read. This command is read-only and does not change lamp time or brightness.
 
 A successful response reports SANlight status opcode `0x0D`, lamp milliseconds since midnight and the raw brightness-related value.
 

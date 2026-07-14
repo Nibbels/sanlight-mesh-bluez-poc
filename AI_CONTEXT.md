@@ -150,14 +150,14 @@ A clean trixie image exposed a real failure because an earlier unit used `/usr/b
 - discovers `bluetooth-meshd` from known Debian locations;
 - exits with a concise error before launching if prerequisites are missing.
 
-The installer starts the service asynchronously and polls `busctl tree org.bluez.mesh /org/bluez/mesh` for up to 25 seconds. Failure prints status and recent journal lines.
+The installer starts the service asynchronously and polls the actual `org.bluez.mesh.Network1` interface with `busctl introspect org.bluez.mesh /org/bluez/mesh org.bluez.mesh.Network1` for up to 25 seconds. Do not pass an object path to `busctl tree`; `tree` accepts service names there and caused a false timeout on a clean trixie installation even though BlueZ had already logged `Added Network Interface on /org/bluez/mesh`. Failure prints status and recent journal lines.
 
 ## Testing expectations
 
 Before packaging or committing:
 
 ```bash
-bash ./scripts/run-tests.sh
+./scripts/run-tests.sh
 ```
 
 Also inspect the archive:

@@ -26,6 +26,8 @@ class CliTest(unittest.TestCase):
     def test_list_nodes_only_suggests_read_only_command(self):
         code, stdout, stderr = self.run_cli("list-nodes")
         self.assertEqual(code, 0, stderr)
+        self.assertIn("NODE_ADDRESS", stdout)
+        self.assertIn("four-digit unicast value", stdout)
         self.assertIn("get-live 0002", stdout)
         self.assertNotIn("set-max", stdout)
         self.assertNotIn("sync-now", stdout)

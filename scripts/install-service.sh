@@ -57,14 +57,18 @@ if [[ "$RESET_MESH_STATE" -eq 1 ]]; then
 fi
 
 systemctl daemon-reload
-systemctl reset-failed sanlight-meshd-generic.service || true
+systemctl reset-failed sanlight-meshd-generic.service >/dev/null 2>&1 || true
 systemctl enable sanlight-meshd-generic.service
 systemctl start --no-block sanlight-meshd-generic.service
 
 READY=0
 for _ in $(seq 1 25); do
     if systemctl is-active --quiet sanlight-meshd-generic.service \
-        && busctl tree org.bluez.mesh /org/bluez/mesh >/dev/null 2>&1; then
+        && busctl introspect \
+            org.bluez.mesh \
+            /org/bluez/mesh \
+            org.bluez.mesh.Network1 \
+            >/dev/null 2>&1; then
         READY=1
         break
     fi
@@ -75,7 +79,7 @@ for _ in $(seq 1 25); do
 done
 
 if [[ "$READY" -ne 1 ]]; then
-    echo "ERROR: org.bluez.mesh was not ready within 25 seconds." >&2
+    echo "ERROR: org.bluez.mesh.Network1 was not ready within 25 seconds." >&2
     echo "Recent service status:" >&2
     systemctl --no-pager --full status sanlight-meshd-generic.service >&2 || true
     echo "Recent service log:" >&2
@@ -83,4 +87,4 @@ if [[ "$READY" -ne 1 ]]; then
     exit 1
 fi
 
-echo "sanlight-meshd-generic.service: active and org.bluez.mesh is ready."
+echo "sanlight-meshd-generic.service: active and org.bluez.mesh.Network1 is ready."
