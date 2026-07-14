@@ -1,86 +1,76 @@
 # SANlight Mesh BlueZ PoC
 
-Minimal proof of concept for controlling SANlight Bluetooth Mesh dimmers from Linux/BlueZ.
+Control SANlight Evo Bluetooth Mesh dimmers from a Raspberry Pi using BlueZ and Python.
 
-Validated path:
+![Visual overview of SANlight Bluetooth mesh control via Raspberry Pi](docs/sanlight_mesh_steuerung_ueber_raspberry_pi.png)
+
+## What this project does
+
+This project is a minimal proof of concept for controlling SANlight Bluetooth Mesh dimmers from Linux/BlueZ.
+
+Validated capabilities:
+
+- read current lamp time and brightness
+- synchronize the internal lamp clock to Raspberry Pi local time
+- set SANlight MaxBrightness, for example `68%`, without using the SANlight app
+
+The SANlight app remains useful as a reference view, but the Raspberry Pi can send the validated Bluetooth Mesh commands directly.
+
+## Setup
+
+For a fresh Raspberry Pi setup, follow:
+
+[SETUP.md](SETUP.md)
+
+The short version after preparing the Raspberry Pi and copying your CDB file is:
+
+```bash
+sudo bash ./scripts/setup-all.sh
+```
+
+## Important
+
+`private/SANlightMesh.json` is exported from the SANlight smartphone app and contains Bluetooth Mesh secrets. Never commit it, publish it, or paste it into issues.
+
+## Requirements at a glance
+
+The validated path is:
 
 - Raspberry Pi OS Lite 64-bit / Debian 13 `trixie`
 - BlueZ `5.82`
 - Raspberry Pi 3 internal Bluetooth controller `BCM43438`
 - `bluetooth-meshd` started with raw HCI I/O: `--io generic:hci0`
 
-The default/MGMT mesh I/O path was not reliable in the original tests: BlueZ reported `Mesh Send Complete`, but an external BLE scanner did not see Pi-originated Mesh `0x2A` / `0x2B` advertisements.
+Read [SETUP.md](SETUP.md) before installing. More detailed notes and troubleshooting live in [INSTRUCTIONS.md](INSTRUCTIONS.md).
 
-## Important
+## Quick usage after setup
 
-`private/SANlightMesh.json` is exported from the SANlight smartphone app and contains Bluetooth Mesh secrets. Never commit it, publish it, or paste it into issues.
-
-## One-command first setup
-
-For a fresh Raspberry Pi after copying `private/SANlightMesh.json` into place:
+List your own lamp node addresses first:
 
 ```bash
-sudo bash ./scripts/setup-all.sh
-```
-
-This resets only the **local Raspberry Pi / BlueZ PoC state**, installs and starts the systemd service, runs the SANlight mesh import/setup, and prints the detected lamp node addresses. It does not change lamp brightness or lamp time.
-
-For later service repair without resetting local mesh state:
-
-```bash
-sudo bash ./scripts/install-service.sh
-```
-
-## Minimal service installation
-
-Install and start the BlueZ mesh daemon service. The installer resolves command paths such as `rfkill`, because their location can differ between distributions:
-
-```bash
-sudo bash ./scripts/install-service.sh
-```
-
-For a fresh device or a deliberate development reset:
-
-```bash
-sudo bash ./scripts/install-service.sh --reset-mesh-state
-```
-
-Then run the CDB import/setup once:
-
-```bash
-sudo python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json --iv-index 0 setup
-```
-
-The generated systemd unit is intentionally minimal: Bluetooth cleanup happens in `install-service.sh` before service start, not inside `ExecStartPre`.
-
-Check logs with:
-
-```bash
-journalctl -u sanlight-meshd-generic.service -f
-```
-
-## Quick commands
-
-After the daemon is running and `setup` has completed:
-
-```bash
-# Show addresses from your own CDB first
 python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json list-nodes
+```
 
-# Read a unicast lamp node from the list
+Read lamp time and brightness from a unicast node:
+
+```bash
 sudo python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json get-live <NODE>
+```
 
-# Set both detected SANlight lamp clocks to current local Pi time
+Sync all detected SANlight lamp clocks to Raspberry Pi local time:
+
+```bash
 sudo python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json sync-now
+```
 
-# Set max brightness; 0 and 1..19 are rejected
+Set MaxBrightness for one lamp. Values `0` and `1..19` are rejected for safety:
+
+```bash
 sudo python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json set-max <NODE> 68
 ```
 
-Read `INSTRUCTIONS.md` for the full minimal setup.
+## Documentation
 
-## Visual overview
-
-This overview image shows the basic setup: SANlight lamps with Bluetooth dimmers, a Raspberry Pi running the BlueZ/Python PoC, and the SANlight app view used as a reference for time and brightness behavior.
-
-![Visual overview of SANlight Bluetooth mesh control via Raspberry Pi](docs/sanlight_mesh_steuerung_ueber_raspberry_pi.png)
+- [SETUP.md](SETUP.md) — minimal first-time Raspberry Pi setup
+- [INSTRUCTIONS.md](INSTRUCTIONS.md) — detailed installation notes, options, and troubleshooting
+- [AI_CONTEXT.md](AI_CONTEXT.md) — technical context for future debugging and AI-assisted continuation

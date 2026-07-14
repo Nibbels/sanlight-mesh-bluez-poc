@@ -1,88 +1,165 @@
-# Minimal setup instructions
+# Detailed instructions
 
-## 1. Known-good target
+For the minimal first-time setup, start with [SETUP.md](SETUP.md).
+
+This file contains additional operational details, options, and troubleshooting notes.
+
+## Known-good target
 
 Validated working setup:
 
-- Raspberry Pi 3 internal Bluetooth controller, `BCM43438`, UART `hci0`.
-- Raspberry Pi OS Lite 64-bit, Debian 13 `trixie`.
-- Kernel seen in the successful test: `6.18.34+rpt-rpi-v8`.
-- BlueZ seen in the successful test: `5.82`.
-- `bluez-meshd` started explicitly with raw HCI I/O: `--io generic:hci0`.
+- Raspberry Pi OS Lite 64-bit / Debian 13 `trixie`
+- BlueZ `5.82`
+- Raspberry Pi 3 internal Bluetooth controller `BCM43438`
+- `bluetooth-meshd` started with raw HCI I/O: `--io generic:hci0`
 
 Known-bad / avoid for now:
 
 - Raspberry Pi OS Bookworm 32-bit with BlueZ `5.66` and the default MGMT mesh I/O path.
-- In that setup, BlueZ logged `Mesh Send Complete`, but an external Shelly BLE scanner did not see the Pi-originated Mesh `0x2A` / `0x2B` advertisements.
+- In that setup, BlueZ logged `Mesh Send Complete`, but an external BLE scanner did not see the Pi-originated Mesh `0x2A` / `0x2B` advertisements.
 
-## 2. Install OS and packages
+## Required files
 
-Flash Raspberry Pi OS Lite 64-bit / Debian 13 `trixie` with Raspberry Pi Imager. Enable SSH in the Imager settings.
-
-After first login:
-
-```bash
-sudo apt update
-sudo apt full-upgrade -y
-sudo apt install -y bluez bluez-meshd python3-dbus python3-gi rfkill
-sudo reboot
-```
-
-Check versions and controller state:
-
-```bash
-uname -a
-bluetoothd --version
-hciconfig -a
-btmgmt info
-rfkill list all
-```
-
-Expected: one Bluetooth controller, usually `hci0`, not hard-blocked.
-
-## 3. Clone/copy repository
-
-```bash
-cd ~
-git clone <your-repo-url> sanlight-mesh-bluez-poc
-cd ~/sanlight-mesh-bluez-poc
-```
-
-No `pip install` is required for the current PoC. The required Python bindings come from Debian packages:
+The project expects the SANlight CDB at:
 
 ```text
-python3-dbus
-python3-gi
+private/SANlightMesh.json
 ```
 
-A compile check is optional but useful:
+This file is exported from the SANlight smartphone app and contains Bluetooth Mesh secrets. It is intentionally ignored by Git.
+
+Recommended permissions:
 
 ```bash
-python3 -m py_compile sanlight_protocol.py sanlight_canonical_sender_poc.py
-```
-
-## 4. Add SANlight CDB file
-
-Export `SANlightMesh.json` from the SANlight app and copy it to:
-
-```text
-~/sanlight-mesh-bluez-poc/private/SANlightMesh.json
-```
-
-Set restrictive permissions:
-
-```bash
-cd ~/sanlight-mesh-bluez-poc
 mkdir -p private
 chmod 700 private
 chmod 600 private/SANlightMesh.json
 ```
 
-Important: `SANlightMesh.json` contains NetKey/AppKey/DeviceKey material. Never commit it and never share it publicly.
+## First-time setup script
 
-## 5. Inspect your node addresses
+The preferred setup command is:
 
-Addresses are installation-specific. Do not assume that `0002`, `0003`, `C000` or `C001` exist in another SANlight mesh.
+```bash
+sudo bash ./scripts/setup-all.sh
+```
+
+Default behavior is a clean **local** setup on the Raspberry Pi:
+
+- checks that `private/SANlightMesh.json` exists
+- checks Python syntax
+- clears `/var/lib/bluetooth/mesh/*`
+- removes `.sanlight-mesh-poc-*-state.json`
+- installs and starts `sanlight-meshd-generic.service`
+- runs the Python `setup`
+- prints detected node addresses
+
+This does **not** reset, unprovision, or modify the actual SANlight lamps. It only rebuilds the Raspberry Pi local BlueZ/Python import state from `private/SANlightMesh.json`.
+
+Keep current local state instead:
+
+```bash
+sudo bash ./scripts/setup-all.sh --keep-state
+```
+
+Use a different Bluetooth controller:
+
+```bash
+sudo bash ./scripts/setup-all.sh --hci hci1
+```
+
+## Service-only installation or repair
+
+Install or repair only the systemd service without running the Python mesh import/setup:
+
+```bash
+sudo bash ./scripts/install-service.sh
+```
+
+Force a local BlueZ/Python state reset during service installation:
+
+```bash
+sudo bash ./scripts/install-service.sh --reset-mesh-state
+```
+
+Use a different Bluetooth controller:
+
+```bash
+sudo bash ./scripts/install-service.sh --hci hci1
+```
+
+Install the service but do not start it:
+
+```bash
+sudo bash ./scripts/install-service.sh --no-start
+```
+
+The generated service runs:
+
+```text
+/usr/libexec/bluetooth/bluetooth-meshd --io generic:hci0 --nodetach
+```
+
+The service unit is intentionally minimal. Bluetooth cleanup happens in `install-service.sh` before service start, not inside `ExecStartPre`, because helper commands such as `hciconfig` or `btmgmt` can block under systemd.
+
+## Service checks
+
+Check whether the service is running:
+
+```bash
+systemctl status sanlight-meshd-generic.service
+```
+
+Check whether BlueZ Mesh is visible on D-Bus:
+
+```bash
+busctl tree org.bluez.mesh
+```
+
+Expected:
+
+```text
+/org/bluez/mesh
+```
+
+Follow logs:
+
+```bash
+journalctl -u sanlight-meshd-generic.service -f
+```
+
+Run an environment summary:
+
+```bash
+bash ./scripts/sanlight-env-check.sh
+```
+
+## Python setup command
+
+Normally `setup-all.sh` runs this for you. Manual command:
+
+```bash
+sudo python3 sanlight_canonical_sender_poc.py \
+  --cdb private/SANlightMesh.json \
+  --iv-index 0 \
+  setup
+```
+
+If you reset `/var/lib/bluetooth/mesh/*`, also remove the local PoC state tokens:
+
+```bash
+rm -f .sanlight-mesh-poc-*-state.json
+```
+
+Otherwise BlueZ may reject old tokens with:
+
+```text
+org.bluez.mesh.Error.NotFound: Attach failed
+```
+
+## Node address discovery
+
+Addresses are installation-specific. Do not assume that `0002`, `0003`, `C000`, or `C001` exist in another SANlight mesh.
 
 Use:
 
@@ -92,9 +169,9 @@ python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json list-no
 
 This prints:
 
-- SANlight lamp node unicast addresses detected from the CDB vendor model.
-- CDB groups.
-- Example commands using the first detected lamp node.
+- SANlight lamp node unicast addresses detected from the CDB vendor model
+- CDB groups
+- example commands using the first detected lamp node
 
 The generic JSON summary is also available:
 
@@ -102,91 +179,50 @@ The generic JSON summary is also available:
 python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json inspect
 ```
 
-In the original test installation, the CDB happened to contain:
+## Commands after setup
 
-```text
-0x0002  3-60 1.5 Master Links
-0x0003  3-60 1.5 Rechts
-0xC000  Rechts
-0xC001  Links
-```
-
-Those values are examples only.
-
-## Recommended first-time setup
-
-After copying `SANlightMesh.json` to `private/SANlightMesh.json`, the recommended first-time command is:
+Read lamp time/brightness from a unicast lamp node:
 
 ```bash
-sudo bash ./scripts/setup-all.sh
+sudo python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json get-live <NODE>
 ```
 
-Default behavior is a clean **local** reset:
-
-- clears `/var/lib/bluetooth/mesh/*`
-- removes `.sanlight-mesh-poc-*-state.json`
-- installs and starts `sanlight-meshd-generic.service`
-- runs the Python `setup`
-- prints detected node addresses
-
-This does not reset or unprovision the SANlight lamps. It only resets the Raspberry Pi's local BlueZ/Python import state and rebuilds it from `private/SANlightMesh.json`.
-
-Use the non-reset path only when you intentionally want to keep the current local BlueZ import state:
+Set MaxBrightness for one lamp. The script rejects `0` and values below `20` for safety:
 
 ```bash
-sudo bash ./scripts/setup-all.sh --keep-state
+sudo python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json set-max <NODE> 68
 ```
 
-## 6. Install and start the mesh daemon service
-
-For normal use, do not keep `bluetooth-meshd` running in a second terminal. Install it as a systemd service:
+Set all detected SANlight lamp clocks manually:
 
 ```bash
-sudo bash ./scripts/install-service.sh
+sudo python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json set-time all 10:38:30
 ```
 
-For a fresh device or a deliberate development reset, also clear old BlueZ mesh state:
+Synchronize all detected SANlight lamp clocks to current local Raspberry Pi time:
 
 ```bash
-sudo bash ./scripts/install-service.sh --reset-mesh-state
+sudo python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json sync-now
 ```
 
-What the script does:
-
-- stops `bluetooth.service`, `bluetooth-mesh.service`, and old `bluetooth-meshd` processes
-- unblocks Bluetooth with `rfkill`
-- prepares `hci0`
-- resolves the absolute paths of `rfkill`, `hciconfig`, `btmgmt`, and `bluetooth-meshd`
-- installs `/etc/systemd/system/sanlight-meshd-generic.service`
-- starts `bluetooth-meshd --io generic:hci0 --nodetach`
-- does not put `hciconfig` or `btmgmt` into `ExecStartPre`, because these helpers can block under systemd
-- enables the service for reboot
-- checks whether `org.bluez.mesh` appears on D-Bus
-- when `--reset-mesh-state` is used, also removes `.sanlight-mesh-poc-*-state.json`
-
-Check service state:
+Manual seconds since local midnight:
 
 ```bash
-systemctl status sanlight-meshd-generic.service
-busctl tree org.bluez.mesh
-journalctl -u sanlight-meshd-generic.service -f
+sudo python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json set-uptime all 61258
 ```
 
-Expected:
+The CLI accepts seconds. The script sends milliseconds on the wire because SANlight expects milliseconds since the lamp day start.
 
-```text
-/org/bluez/mesh
-```
+## Manual daemon start for debugging
 
-## 7. Manual daemon start, only for debugging
+The two-terminal foreground daemon mode is a debug fallback only.
 
-The manual two-terminal mode is still useful when debugging BlueZ itself.
-
-Terminal 1:
+Stop services and start the daemon in foreground:
 
 ```bash
 sudo systemctl stop bluetooth.service
 sudo systemctl stop bluetooth-mesh.service
+sudo systemctl stop sanlight-meshd-generic.service
 sudo pkill -x bluetoothd 2>/dev/null || true
 sudo pkill -x bluetooth-meshd 2>/dev/null || true
 
@@ -209,98 +245,22 @@ mesh_ready_callback
 Added Network Interface on /org/bluez/mesh
 ```
 
-Keep this terminal running only for debug sessions.
+Use another terminal for Python commands while this debug daemon is running.
 
-## 8. Import/configure local mesh identities
+## Development notes
 
-Open Terminal 2:
-
-```bash
-cd ~/sanlight-mesh-bluez-poc
-
-sudo python3 sanlight_canonical_sender_poc.py \
-  --cdb private/SANlightMesh.json \
-  --iv-index 0 \
-  setup
-```
-
-Expected end result:
-
-```text
-SETUP OK
-```
-
-This creates local state files such as:
-
-```text
-.sanlight-mesh-poc-provisioner-state.json
-.sanlight-mesh-poc-appid2-sender-state.json
-```
-
-These files also must not be committed or shared.
-
-## 9. First functional tests
-
-First list addresses from your CDB:
+Make shell scripts executable in Git:
 
 ```bash
-python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json list-nodes
+git update-index --chmod=+x scripts/install-service.sh
+git update-index --chmod=+x scripts/setup-all.sh
+git update-index --chmod=+x scripts/sanlight-env-check.sh
 ```
 
-Read lamp time/brightness from a unicast lamp node reported by `list-nodes`:
+The repository also includes:
 
-```bash
-sudo python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json get-live <NODE>
+```gitattributes
+*.sh text eol=lf
 ```
 
-Set MaxBrightness for one lamp. The script rejects `0` and values below `20` for safety:
-
-```bash
-sudo python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json set-max <NODE> 68
-```
-
-Set all detected SANlight lamp clocks manually:
-
-```bash
-sudo python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json set-time all 10:38:30
-```
-
-Synchronize all detected SANlight lamp clocks to current local Pi time:
-
-```bash
-sudo python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json sync-now
-```
-
-Manual seconds since local midnight also works. The CLI accepts seconds; the script sends milliseconds on the wire because SANlight expects milliseconds:
-
-```bash
-sudo python3 sanlight_canonical_sender_poc.py --cdb private/SANlightMesh.json set-uptime all 61258
-```
-
-## 10. Optional systemd service for the mesh daemon
-
-For manual development, keep Terminal 1 running. For a later always-on setup, copy and adapt the example service:
-
-```bash
-sudo cp systemd/sanlight-meshd-generic.service.example /etc/systemd/system/sanlight-meshd-generic.service
-sudo systemctl daemon-reload
-sudo systemctl enable sanlight-meshd-generic.service
-sudo systemctl start sanlight-meshd-generic.service
-journalctl -u sanlight-meshd-generic.service -f
-```
-
-Run `setup` once after the daemon is running.
-
-## 11. Reset procedure
-
-Only for development resets:
-
-```bash
-sudo systemctl stop sanlight-meshd-generic.service bluetooth.service bluetooth-mesh.service
-sudo pkill -x bluetoothd 2>/dev/null || true
-sudo pkill -x bluetooth-meshd 2>/dev/null || true
-sudo rm -rf /var/lib/bluetooth/mesh/*
-rm -f .sanlight-mesh-poc-*-state.json
-```
-
-Then restart the mesh daemon and run `setup` again.
+This avoids Windows CRLF line-ending problems in shell scripts.

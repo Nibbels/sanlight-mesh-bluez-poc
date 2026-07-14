@@ -235,3 +235,19 @@ It intentionally resets local Raspberry Pi state by default:
 This is safe for the PoC because the SANlight network identity is rebuilt from `private/SANlightMesh.json`; it does not unprovision or reset the actual lamps. The script does not change brightness or lamp time.
 
 `--keep-state` exists for service repair / non-destructive reruns. `install-service.sh --reset-mesh-state` must also delete `.sanlight-mesh-poc-*-state.json`, otherwise BlueZ attach can fail with `org.bluez.mesh.Error.NotFound` after a local BlueZ state reset.
+
+
+## Documentation structure rule
+
+README.md is for first impression, visual overview, jumpstart commands, and links only. Do not put detailed setup, service repair, or debug procedure blocks there.
+
+SETUP.md is the minimal first-time path only:
+
+1. Install Raspberry Pi OS/packages.
+2. Get repository and `private/SANlightMesh.json` in place.
+3. Run `sudo bash ./scripts/setup-all.sh`.
+4. Run one safe read-only `get-live` test.
+
+INSTRUCTIONS.md contains detailed setup options, service repair, known-good versions, command reference, and troubleshooting.
+
+AI_CONTEXT.md contains deep debugging notes, rationale, architecture, validated vendor opcodes, historical dead ends, and future continuation context.
