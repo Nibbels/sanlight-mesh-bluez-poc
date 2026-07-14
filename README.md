@@ -1,8 +1,8 @@
+![Visual overview of SANlight Bluetooth mesh control via Raspberry Pi](docs/sanlight_mesh_steuerung_ueber_raspberry_pi.png)
+
 # SANlight Mesh BlueZ PoC
 
 Control SANlight Evo Bluetooth Mesh dimmers from a Raspberry Pi using BlueZ and Python.
-
-![Visual overview of SANlight Bluetooth mesh control via Raspberry Pi](docs/sanlight_mesh_steuerung_ueber_raspberry_pi.png)
 
 ## What this project does
 
