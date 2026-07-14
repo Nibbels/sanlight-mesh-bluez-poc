@@ -235,11 +235,22 @@ Safety rules:
 - ordinary `set-max` remains strictly `20..100`; never weaken it to accept zero;
 - `get-max` must decode `0..100`, because `0` is a legitimate reported off state;
 - explicit 0% output uses only `blackout ... --confirm-blackout`;
-- blackout must pre-read every selected unicast node, create a protected restore snapshot, send 0 only to nodes not already off, and verify `get-max = 0`;
+- blackout must pre-read every selected unicast node, snapshot only nodes that will actually change, send 0 only to those nodes, and verify `get-max = 0`;
+- an all-already-off blackout is a no-op and must not create a zero-value snapshot that shadows a useful restore point;
 - blackout never uses a group destination internally, because one group response cannot verify every lamp;
-- restore validates Mesh/sender identity and CDB membership, skips already matching nodes, and verifies every write;
+- completed GetMax transactions must invalidate their timeout/retry generation before a write phase begins; stale preflight timers must never overlap brightness writes;
+- restore validates Mesh/sender identity and CDB membership, skips already matching nodes, verifies every write, and marks the snapshot completed only after full success;
+- `restore-blackout latest` selects the newest active snapshot that contains no legacy zero-value entries, so repeated restores unwind overlapping blackout operations in reverse order; ambiguous v8 snapshots remain available only by exact path;
 - Q-Series Gen2 has a 20% minimum; 0% support must be confirmed by the operator for EVO/EVO COMPACT/STIXX hardware;
 - 0% is commanded light output off, not electrical mains isolation.
+
+
+Hardware validation of the first blackout implementation exposed two bugs that are now regression requirements:
+
+- a completed preflight timeout could fire after the 0% write started, causing an overlapping stale GetMax retry and an ignored valid `0x09 = 0` response;
+- creating snapshots for already-off nodes made `latest` point at a no-op 0% snapshot instead of the useful earlier restore point.
+
+The runtime now uses generation invalidation between phases, snapshots only changed nodes, creates no snapshot for an all-off no-op, and treats completed snapshots as an undo stack.
 
 ## Outgoing traffic and sequence budget
 

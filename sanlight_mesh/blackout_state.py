@@ -15,6 +15,7 @@ from uuid import UUID
 from .state import StateError, read_state, write_state
 
 BLACKOUT_SNAPSHOT_SCHEMA = 1
+BLACKOUT_SNAPSHOT_ROLE = "sanlight-blackout-restore-snapshot"
 
 
 @dataclass(frozen=True)
@@ -32,6 +33,16 @@ class BlackoutSnapshot:
     sender_unicast: int
     created_at: str
     entries: tuple[BlackoutEntry, ...]
+    restored_at: str | None = None
+
+
+def _utc_timestamp(now: datetime | None = None) -> tuple[datetime, str]:
+    timestamp = now or datetime.now(timezone.utc)
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    timestamp = timestamp.astimezone(timezone.utc)
+    text = timestamp.isoformat(timespec="seconds").replace("+00:00", "Z")
+    return timestamp, text
 
 
 def _validate_reported_restore_percent(value: Any) -> int:
@@ -54,6 +65,14 @@ def _parse_uuid(value: Any, label: str) -> UUID:
 def _parse_unicast(value: Any, label: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 0x7FFF:
         raise StateError(f"Blackout snapshot contains no valid {label}")
+    return value
+
+
+def _parse_optional_timestamp(value: Any, label: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise StateError(f"Blackout snapshot contains an invalid {label}")
     return value
 
 
@@ -86,11 +105,7 @@ def create_blackout_snapshot(
             }
         )
 
-    timestamp = now or datetime.now(timezone.utc)
-    if timestamp.tzinfo is None:
-        timestamp = timestamp.replace(tzinfo=timezone.utc)
-    timestamp = timestamp.astimezone(timezone.utc)
-    created_at = timestamp.isoformat(timespec="seconds").replace("+00:00", "Z")
+    timestamp, created_at = _utc_timestamp(now)
     filename_stamp = timestamp.strftime("%Y%m%dT%H%M%SZ")
     path = state_dir / f"blackout-{filename_stamp}.json"
     suffix = 1
@@ -100,7 +115,7 @@ def create_blackout_snapshot(
 
     payload = {
         "schema": BLACKOUT_SNAPSHOT_SCHEMA,
-        "role": "sanlight-blackout-restore-snapshot",
+        "role": BLACKOUT_SNAPSHOT_ROLE,
         "meshUUID": str(mesh_uuid),
         "senderProvisionerUUID": str(sender_uuid),
         "senderUnicast": _parse_unicast(sender_unicast, "sender unicast"),
@@ -131,7 +146,7 @@ def load_blackout_snapshot(
         raise StateError(f"Blackout snapshot does not exist: {path}")
     if state.get("schema") != BLACKOUT_SNAPSHOT_SCHEMA:
         raise StateError("Blackout snapshot schema is unsupported")
-    if state.get("role") != "sanlight-blackout-restore-snapshot":
+    if state.get("role") != BLACKOUT_SNAPSHOT_ROLE:
         raise StateError("File is not a SANlight blackout restore snapshot")
 
     mesh_uuid = _parse_uuid(state.get("meshUUID"), "mesh UUID")
@@ -172,6 +187,7 @@ def load_blackout_snapshot(
     created_at = state.get("createdAt")
     if not isinstance(created_at, str) or not created_at:
         raise StateError("Blackout snapshot contains no creation timestamp")
+    restored_at = _parse_optional_timestamp(state.get("restoredAt"), "restore timestamp")
 
     return BlackoutSnapshot(
         path=path,
@@ -180,13 +196,67 @@ def load_blackout_snapshot(
         sender_unicast=sender_unicast,
         created_at=created_at,
         entries=tuple(entries),
+        restored_at=restored_at,
+    )
+
+
+def mark_blackout_snapshot_restored(
+    path: Path, *, now: datetime | None = None
+) -> str:
+    state = read_state(path)
+    if state is None:
+        raise StateError(f"Blackout snapshot does not exist: {path}")
+    if state.get("schema") != BLACKOUT_SNAPSHOT_SCHEMA:
+        raise StateError("Blackout snapshot schema is unsupported")
+    if state.get("role") != BLACKOUT_SNAPSHOT_ROLE:
+        raise StateError("File is not a SANlight blackout restore snapshot")
+
+    _, restored_at = _utc_timestamp(now)
+    state["restoredAt"] = restored_at
+    write_state(path, state)
+    return restored_at
+
+
+def _is_active_blackout_snapshot(path: Path) -> bool:
+    state = read_state(path)
+    if not (
+        state is not None
+        and state.get("schema") == BLACKOUT_SNAPSHOT_SCHEMA
+        and state.get("role") == BLACKOUT_SNAPSHOT_ROLE
+        and state.get("restoredAt") is None
+    ):
+        return False
+
+    # v8 snapshots included nodes that were already off. Such snapshots are
+    # ambiguous as undo steps and can unexpectedly restore 0%. New snapshots
+    # contain only nodes actually changed by the blackout, so a zero entry is
+    # selected only through an explicit path, never through "latest".
+    raw_entries = state.get("entries")
+    return bool(
+        isinstance(raw_entries, list)
+        and raw_entries
+        and all(
+            isinstance(entry, dict)
+            and isinstance(entry.get("percent"), int)
+            and not isinstance(entry.get("percent"), bool)
+            and entry.get("percent") != 0
+            for entry in raw_entries
+        )
     )
 
 
 def resolve_blackout_snapshot_path(value: str, state_dir: Path) -> Path:
     if value.strip().lower() != "latest":
         return Path(value).expanduser().resolve()
-    candidates = sorted(state_dir.glob("blackout-*.json"), reverse=True)
-    if not candidates:
-        raise StateError(f"No blackout snapshot found in {state_dir}")
-    return candidates[0].resolve()
+
+    candidates = sorted(
+        state_dir.glob("blackout-*.json"),
+        key=lambda candidate: (candidate.stat().st_mtime_ns, candidate.name),
+        reverse=True,
+    )
+    for candidate in candidates:
+        if _is_active_blackout_snapshot(candidate):
+            return candidate.resolve()
+    raise StateError(
+        f"No active unambiguous blackout snapshot found in {state_dir}"
+    )

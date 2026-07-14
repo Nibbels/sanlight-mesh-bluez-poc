@@ -59,7 +59,11 @@ from .max_brightness_policy import (
     set_max_status_rejection_reason,
     unicast_status_rejection_reason,
 )
-from .blackout_state import BlackoutEntry, create_blackout_snapshot
+from .blackout_state import (
+    BlackoutEntry,
+    create_blackout_snapshot,
+    mark_blackout_snapshot_restored,
+)
 from .traffic_safety import record_brightness_write
 from .state import (
     StateError,
@@ -1320,6 +1324,14 @@ class BluezRuntime:
             f"Missing status from: {missing_text}."
         )
 
+    def _cancel_get_max_transaction(self) -> None:
+        """Invalidate every timeout/retry belonging to the previous readback."""
+        self.get_max_generation += 1
+        self.get_max_started = False
+        self.get_max_status = None
+        self.get_max_retry_pending = False
+        self.get_max_purpose = ""
+
     def _reset_brightness_write_transaction(self) -> None:
         self.set_max_generation += 1
         self.set_max_attempt = 0
@@ -1328,9 +1340,7 @@ class BluezRuntime:
             self.control.sanlight_nodes,
         )
         self.set_max_status_sources = set()
-        self.get_max_started = False
-        self.get_max_status = None
-        self.get_max_retry_pending = False
+        self._cancel_get_max_transaction()
 
     def prepare_single_brightness_write(self, destination: int, percent: int) -> None:
         self.current_brightness_destination = destination
@@ -1357,28 +1367,8 @@ class BluezRuntime:
 
     def _start_next_blackout_preflight_query(self) -> None:
         if not self.preflight_queue:
-            entries = [
-                BlackoutEntry(
-                    address=address,
-                    name=self.control.sanlight_nodes[address],
-                    percent=self.blackout_original_values[address],
-                )
-                for address in self.blackout_targets
-            ]
-            snapshot = create_blackout_snapshot(
-                state_dir=self.args.sender_state.parent,
-                mesh_uuid=self.control.mesh_uuid,
-                sender_uuid=self.sender.provisioner.uuid,
-                sender_unicast=self.sender_unicast,
-                entries=entries,
-            )
-            self.blackout_snapshot_path = snapshot.path
-            print(
-                f"Protected restore snapshot created at {snapshot.path}. "
-                "It contains node addresses and percentages, but no Mesh keys or tokens."
-            )
-            self.batch_write_queue = [
-                (address, 0)
+            changing_targets = [
+                address
                 for address in self.blackout_targets
                 if self.blackout_original_values[address] != 0
             ]
@@ -1391,14 +1381,59 @@ class BluezRuntime:
                 already_off = ", ".join(
                     f"0x{address:04X}" for address, _ in self.batch_write_results
                 )
-                print(
-                    f"Already off; no 0% write needed for: {already_off}."
+                print(f"Already off; no 0% write needed for: {already_off}.")
+
+            if not changing_targets:
+                self.finish(
+                    "BLACKOUT COMPLETE. Every selected node already reports 0% "
+                    "(off); no write and no restore snapshot were created."
                 )
+                return
+
+            entries = [
+                BlackoutEntry(
+                    address=address,
+                    name=self.control.sanlight_nodes[address],
+                    percent=self.blackout_original_values[address],
+                )
+                for address in changing_targets
+            ]
+            snapshot = create_blackout_snapshot(
+                state_dir=self.args.sender_state.parent,
+                mesh_uuid=self.control.mesh_uuid,
+                sender_uuid=self.sender.provisioner.uuid,
+                sender_unicast=self.sender_unicast,
+                entries=entries,
+            )
+            self.blackout_snapshot_path = snapshot.path
+            print(
+                f"Protected restore snapshot created at {snapshot.path}. "
+                "It contains only nodes changed by this blackout, with their "
+                "previous percentages; it contains no Mesh keys or tokens."
+            )
+            self.batch_write_queue = [(address, 0) for address in changing_targets]
             self.start_next_batch_brightness_write()
             return
 
         self.current_brightness_destination = self.preflight_queue.pop(0)
         self.start_get_max_readback("blackout-preflight")
+
+    def _mark_restore_snapshot_completed(self) -> str | None:
+        snapshot = self.args.restore_snapshot
+        try:
+            restored_at = mark_blackout_snapshot_restored(snapshot.path)
+        except StateError as exc:
+            self.fail(
+                "Brightness values were restored, but the snapshot could not be "
+                f"marked completed: {exc}"
+            )
+            return None
+        print(
+            f"Restore snapshot marked completed at {restored_at}. "
+            "Future 'restore-blackout latest' calls will select the next active "
+            "snapshot instead of replaying this one."
+        )
+        return restored_at
 
     def start_restore_preflight(self) -> None:
         snapshot = self.args.restore_snapshot
@@ -1412,11 +1447,19 @@ class BluezRuntime:
             f"Starting read-only restore preflight from {snapshot.path} "
             f"(created {snapshot.created_at})."
         )
+        if snapshot.restored_at is not None:
+            print(
+                f"NOTE: this explicitly selected snapshot was previously marked "
+                f"restored at {snapshot.restored_at}; applying it again is "
+                "intentional and idempotent."
+            )
         self._start_next_restore_preflight_query()
 
     def _start_next_restore_preflight_query(self) -> None:
         if not self.preflight_queue:
             if not self.batch_write_queue:
+                if self._mark_restore_snapshot_completed() is None:
+                    return
                 self.finish(
                     "RESTORE-BLACKOUT COMPLETE. Every node already reports the "
                     "percentage stored in the snapshot; no brightness write was sent."
@@ -1442,6 +1485,8 @@ class BluezRuntime:
                     f"{self.blackout_snapshot_path}."
                 )
             else:
+                if self._mark_restore_snapshot_completed() is None:
+                    return
                 self.finish(
                     "RESTORE-BLACKOUT VERIFIED. Snapshot values were restored and "
                     f"read back successfully: {summary}."
@@ -1694,7 +1739,7 @@ class BluezRuntime:
                 )
                 return
             self.blackout_original_values[source] = value
-            self.get_max_started = False
+            self._cancel_get_max_transaction()
             self._start_next_blackout_preflight_query()
             return
 
@@ -1708,7 +1753,7 @@ class BluezRuntime:
                 self.batch_write_results.append((source, value))
             else:
                 self.batch_write_queue.append((source, desired))
-            self.get_max_started = False
+            self._cancel_get_max_transaction()
             self._start_next_restore_preflight_query()
             return
 
@@ -1726,7 +1771,7 @@ class BluezRuntime:
                 )
             else:
                 self.batch_write_results.append((source, value))
-                self.get_max_started = False
+                self._cancel_get_max_transaction()
                 self.start_next_batch_brightness_write()
             return
 

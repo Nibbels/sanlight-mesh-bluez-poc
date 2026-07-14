@@ -239,11 +239,19 @@ sudo python3 sanlight_canonical_sender_poc.py \
 ```
 
 Before sending any 0% command, `blackout` reads every selected node. It aborts
-without writing when a current value cannot be read safely. It then creates a
-mode-`0600` restore snapshot under `.state/`, sends 0% only to nodes that are not
-already off, and requires `get-max = 0` from every changed node. The snapshot
-contains addresses and percentages, not Mesh keys or state tokens. Keep it
-private because it still describes the installation.
+without writing when a current value cannot be read safely. It creates a
+mode-`0600` restore snapshot under `.state/` containing **only nodes that this
+invocation will actually change**, then sends 0% to those nodes and requires
+`get-max = 0` from every changed node. Nodes that already report 0% are skipped
+and are not added to the new snapshot. If every selected node is already off,
+no write and no snapshot are created. The snapshot contains addresses and prior
+percentages, not Mesh keys or state tokens. Keep it private because it still
+describes the installation.
+
+The blackout implementation serializes preflight reads, writes, acknowledgements,
+and verification reads. Completed readback transactions invalidate their pending
+timeouts before the next phase starts, preventing an old preflight retry from
+overlapping a 0% write.
 
 The official SANlight Bluetooth dimmer manual states that 0% (off) is supported
 by EVO, EVO COMPACT, and STIXX dimmers, while Q-Series Gen2 dimmers have a 20%
@@ -263,8 +271,25 @@ sudo python3 sanlight_canonical_sender_poc.py \
 Or provide the exact protected snapshot path printed by `blackout`. Restoration
 validates Mesh UUID, sender identity, CDB node membership, and every stored
 percentage. It skips nodes that already match and verifies every value it writes.
-Snapshots are retained after restoration for audit and recovery; remove an old
-snapshot manually only after the lamps have been independently checked.
+
+Snapshots act as an undo stack. After a successful restore, the snapshot is
+atomically marked completed but retained for audit. A later `restore-blackout
+latest` selects the newest **active** snapshot instead of replaying one that was
+already restored. Repeating `restore-blackout latest` therefore unwinds multiple
+blackout operations in reverse order. An exact snapshot path can still be
+reapplied deliberately; the CLI prints that it was previously completed.
+
+This matters when blackouts overlap. Example: black out node `0003`, then run
+`blackout all`. The second snapshot contains only the other nodes that changed.
+Restoring `latest` first undoes the second operation; running it again restores
+node `0003` from the earlier snapshot. Remove old snapshot files manually only
+after the lamps have been independently checked.
+
+Compatibility note: snapshots created by the older blackout implementation may
+contain entries whose stored value is `0`. Those files are ambiguous undo steps
+and are intentionally skipped by `restore-blackout latest`; they remain usable
+only through an exact path. This prevents a legacy no-op snapshot from silently
+turning a restored lamp off again.
 
 A recent brightness write may trigger the 10-second safety guard. Wait for the
 reported remaining interval. Use `--allow-fast-control` only for a deliberate

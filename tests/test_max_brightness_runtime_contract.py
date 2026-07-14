@@ -59,6 +59,32 @@ class MaxBrightnessRuntimeContractTest(unittest.TestCase):
         self.assertIn("get_max_brightness_status_value", calls)
         self.assertIn("unicast_status_rejection_reason", calls)
 
+    def test_transition_to_write_invalidates_stale_get_max_timers(self):
+        self.assertIn(
+            "_cancel_get_max_transaction",
+            self.called_methods(self.methods["_reset_brightness_write_transaction"]),
+        )
+        self.assertIn(
+            "_cancel_get_max_transaction",
+            self.called_methods(self.methods["on_get_max_status"]),
+        )
+
+    def test_successful_restore_marks_snapshot_completed(self):
+        self.assertIn(
+            "_mark_restore_snapshot_completed",
+            self.called_methods(self.methods["_start_next_restore_preflight_query"]),
+        )
+        self.assertIn(
+            "_mark_restore_snapshot_completed",
+            self.called_methods(self.methods["start_next_batch_brightness_write"]),
+        )
+
+    def test_already_off_blackout_does_not_create_an_empty_snapshot(self):
+        method = self.methods["_start_next_blackout_preflight_query"]
+        source = ast.get_source_segment(RUNTIME.read_text(encoding="utf-8"), method)
+        self.assertIn("if not changing_targets", source)
+        self.assertIn("no write and no restore snapshot were created", source)
+
 
 if __name__ == "__main__":
     unittest.main()
