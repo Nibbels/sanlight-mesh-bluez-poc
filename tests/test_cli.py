@@ -101,6 +101,50 @@ class CliTest(unittest.TestCase):
             )
         self.assertIn("invalid parse_sequence_target value", stderr.getvalue())
 
+    def test_blackout_requires_confirmation_before_dbus(self):
+        code, stdout, stderr = self.run_cli("blackout", "0002")
+        self.assertEqual(code, 2)
+        self.assertIn("--confirm-blackout", stderr)
+        self.assertNotIn("D-Bus", stderr)
+
+    def test_blackout_accepts_all_and_rejects_group(self):
+        args = build_parser().parse_args(
+            ["--cdb", str(FIXTURE), "blackout", "all", "--confirm-blackout"]
+        )
+        self.assertIsNone(args.destination)
+        code, stdout, stderr = self.run_cli(
+            "blackout", "C000", "--confirm-blackout"
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("unicast", stderr)
+
+    def test_restore_requires_confirmation_before_snapshot_access(self):
+        code, stdout, stderr = self.run_cli("restore-blackout", "latest")
+        self.assertEqual(code, 2)
+        self.assertIn("--confirm-restore", stderr)
+        self.assertNotIn("D-Bus", stderr)
+
+    def test_set_max_keeps_zero_forbidden_while_blackout_is_separate(self):
+        set_args = build_parser().parse_args(
+            ["--cdb", str(FIXTURE), "set-max", "0002", "20"]
+        )
+        blackout_args = build_parser().parse_args(
+            ["--cdb", str(FIXTURE), "blackout", "0002", "--confirm-blackout"]
+        )
+        self.assertEqual(set_args.command, "set-max")
+        self.assertEqual(blackout_args.command, "blackout")
+        self.assertFalse(set_args.allow_fast_control)
+
+
+    def test_help_formats_with_percent_signs(self):
+        parser = build_parser()
+        self.assertIn("blackout", parser.format_help())
+        blackout_parser = next(
+            action for action in parser._actions if action.dest == "command"
+        ).choices["blackout"]
+        self.assertIn("0%", blackout_parser.format_help())
+
+
 
 if __name__ == "__main__":
     unittest.main()

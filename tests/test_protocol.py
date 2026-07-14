@@ -5,6 +5,7 @@ from sanlight_mesh.protocol import (
     build_config_network_transmit_get_pdu,
     build_get_max_brightness_pdu,
     build_get_uptime_brightness_pdu,
+    build_blackout_pdu,
     build_set_max_brightness_pdu,
     build_set_uptime_pdu,
     build_vendor_model_app_bind_pdu,
@@ -29,6 +30,7 @@ class ProtocolTest(unittest.TestCase):
         self.assertEqual(build_set_max_brightness_pdu(68), bytes.fromhex("c68b0a44"))
         with self.assertRaises(ValueError):
             build_set_max_brightness_pdu(0)
+        self.assertEqual(build_blackout_pdu(), bytes.fromhex("c68b0a00"))
 
     def test_get_max_brightness_request_and_status_decode(self):
         self.assertEqual(build_get_max_brightness_pdu(), bytes.fromhex("c88b0a"))
@@ -36,10 +38,18 @@ class ProtocolTest(unittest.TestCase):
             get_max_brightness_status_value(bytes.fromhex("c98b0a44")),
             68,
         )
+        self.assertEqual(
+            get_max_brightness_status_value(bytes.fromhex("c98b0a00")),
+            0,
+        )
+        self.assertEqual(
+            get_max_brightness_status_value(bytes.fromhex("c98b0a13")),
+            19,
+        )
         for payload in (
             bytes.fromhex("c98b0a"),
             bytes.fromhex("c98b0a4411"),
-            bytes.fromhex("c98b0a13"),
+            bytes.fromhex("c98b0aff"),
             bytes.fromhex("c78b0a44"),
         ):
             with self.subTest(payload=payload.hex()), self.assertRaises(ValueError):

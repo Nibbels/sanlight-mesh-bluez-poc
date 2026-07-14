@@ -64,6 +64,8 @@ The following material is private:
 - NetKey, AppKey and every DeviceKey
 - `.state/control-provisioner.json`
 - `.state/canonical-sender.json`
+- `.state/blackout-*.json` restore snapshots
+- `.state/brightness-write-rate.json` safety state
 - BlueZ Mesh database under `/var/lib/bluetooth/mesh`
 
 The project state directory is mode `0700`; state files are atomically written with mode `0600`. Tokens are never printed during import or attach. A mode-`0600` runtime lock rejects concurrent commands that would compete for the same D-Bus object paths. The files are ignored by Git.
@@ -106,8 +108,11 @@ sudo python3 sanlight_canonical_sender_poc.py \
 `get-max` sends SANlight GetMaxBrightness (`C8 8B 0A`) and requires a matching
 status (`C9 8B 0A <PERCENT>`). It accepts only the requested source node, the
 expected AppKey and a response addressed back to the canonical sender. The
-status must contain exactly one byte in the valid `20..100` range. A missing or
-malformed response is retried once and never changes lamp state.
+status must contain exactly one byte in the reportable `0..100` range. `0` is
+displayed as **off**; values `1..19` are preserved as unexpected diagnostics
+instead of being silently discarded. A missing or malformed response is retried
+once and never changes lamp state. The ordinary `set-max` command still rejects
+`0` and accepts only `20..100`.
 
 Read the Bluetooth Mesh Config Network Transmit setting from one unicast node:
 
@@ -128,7 +133,44 @@ sudo python3 sanlight_canonical_sender_poc.py \
 This prints only sender addresses, IV Index, IV Update flag, Sequence Number,
 remaining 24-bit sequence space, and seconds since Mesh traffic was last heard.
 It does not read `node.json` while the daemon is running and does not print keys
-or state tokens.
+or state tokens. It also shows rough sequence-budget estimates for high-frequency
+control.
+
+## Traffic frequency and Sequence Number budget
+
+Every **new outgoing Bluetooth Mesh message** from the canonical sender consumes
+one value from its 24-bit Sequence Number space (`0..0xFFFFFF`, 16,777,216
+values per IV Index). This includes read-only queries such as `get-max` and
+`get-live`; read-only does not mean sequence-free. Network retransmissions of the
+same PDU are handled by the Mesh stack, but each new application query or retry
+is a new message.
+
+A successfully verified unicast `set-max` normally uses at least two outgoing
+messages: the write and its GetMaxBrightness readback. With both bounded retries,
+it can use up to four. At one verified update every second, the complete 24-bit
+space would last only about **49 to 97 days** from zero. A 90-day cultivation run
+at that rate can therefore exhaust the sender even without a software bug. The
+Bluetooth SIG specifies IV Update as the standards-based way to obtain a fresh
+sequence space, but this project does not initiate or automate a network-wide IV
+Update. See the [Bluetooth Mesh Security Overview](https://www.bluetooth.com/wp-content/uploads/2025/04/MeshSecurityOverview_INFO_v1.0-1.pdf).
+
+Project policy:
+
+- use event-driven control and send only when the requested value meaningfully
+  changes;
+- do not poll `get-max` or `get-live` every second;
+- for routine MaxBrightness automation, use **one minute or slower** unless a
+  carefully reviewed use case requires otherwise;
+- a one-minute verified update cadence over 90 days consumes roughly 259,200 to
+  518,400 sequence values (about 1.5% to 3.1% of the full space);
+- the CLI enforces a persistent **10-second minimum interval** between separate
+  brightness-changing commands. This is an emergency guard against accidental
+  tight loops, not a recommended control cadence;
+- `--allow-fast-control` bypasses that guard and must only be used deliberately.
+
+The lamp-side daily schedule should remain the primary fine-grained lighting
+profile. Pi-side MaxBrightness control should adjust a coarse limit only when
+there is a meaningful reason to do so.
 
 ## Writing commands
 
@@ -176,6 +218,57 @@ the app may display a cached value until it reconnects.
 A Mesh group write is sent only once. Responses from individual group members
 cannot prove that every member applied the value, so group output is explicitly
 reported as group-wide unconfirmed even when one or more statuses are observed.
+
+### Explicit blackout and restoration
+
+`set-max` intentionally never accepts zero. An intentional 0% output state uses
+a separate, strongly confirmed command:
+
+```bash
+sudo python3 sanlight_canonical_sender_poc.py \
+    --cdb private/SANlightMesh.json \
+    blackout 0003 --confirm-blackout
+```
+
+Black out every detected SANlight lamp node individually:
+
+```bash
+sudo python3 sanlight_canonical_sender_poc.py \
+    --cdb private/SANlightMesh.json \
+    blackout all --confirm-blackout
+```
+
+Before sending any 0% command, `blackout` reads every selected node. It aborts
+without writing when a current value cannot be read safely. It then creates a
+mode-`0600` restore snapshot under `.state/`, sends 0% only to nodes that are not
+already off, and requires `get-max = 0` from every changed node. The snapshot
+contains addresses and percentages, not Mesh keys or state tokens. Keep it
+private because it still describes the installation.
+
+The official SANlight Bluetooth dimmer manual states that 0% (off) is supported
+by EVO, EVO COMPACT, and STIXX dimmers, while Q-Series Gen2 dimmers have a 20%
+minimum. `--confirm-blackout` means the operator has verified that the connected
+dimmer series supports 0%. A blackout means zero commanded light output; it is
+not electrical isolation from mains power. See the [SANlight Bluetooth Dimmer
+manual](https://www.sanlight.com/wp-content/uploads/2023/03/sanlight-bt-dimmer-manual-2023-en.pdf).
+
+Restore the newest snapshot:
+
+```bash
+sudo python3 sanlight_canonical_sender_poc.py \
+    --cdb private/SANlightMesh.json \
+    restore-blackout latest --confirm-restore
+```
+
+Or provide the exact protected snapshot path printed by `blackout`. Restoration
+validates Mesh UUID, sender identity, CDB node membership, and every stored
+percentage. It skips nodes that already match and verifies every value it writes.
+Snapshots are retained after restoration for audit and recovery; remove an old
+snapshot manually only after the lamps have been independently checked.
+
+A recent brightness write may trigger the 10-second safety guard. Wait for the
+reported remaining interval. Use `--allow-fast-control` only for a deliberate
+hardware test, not as normal automation.
 
 Set one lamp clock to an explicit local clock value:
 

@@ -27,6 +27,7 @@ from .protocol import (
     build_config_network_transmit_get_pdu,
     build_get_max_brightness_pdu,
     build_get_uptime_brightness_pdu,
+    build_blackout_pdu,
     build_set_max_brightness_pdu,
     build_set_uptime_pdu,
     build_vendor_model_app_bind_pdu,
@@ -58,6 +59,8 @@ from .max_brightness_policy import (
     set_max_status_rejection_reason,
     unicast_status_rejection_reason,
 )
+from .blackout_state import BlackoutEntry, create_blackout_snapshot
+from .traffic_safety import record_brightness_write
 from .state import (
     StateError,
     read_state,
@@ -325,7 +328,9 @@ class SenderElement(dbus.service.Object):
         )
 
         if is_set_max_brightness_status(payload):
-            if self.runtime.args.command != "set-max":
+            if self.runtime.args.command not in (
+                "set-max", "blackout", "restore-blackout"
+            ):
                 print(
                     "Ignoring SANlight SetMaxBrightness status because no "
                     "set-max transaction is active."
@@ -339,7 +344,7 @@ class SenderElement(dbus.service.Object):
                 source=source_int,
                 key_index=int(key_index),
                 response_destination=response_destination,
-                requested_destination=self.runtime.args.destination,
+                requested_destination=self.runtime.current_brightness_destination,
                 expected_app_index=self.runtime.control.app_index,
                 sender_unicast=self.runtime.sender_unicast,
                 node_addresses=self.runtime.control.sanlight_nodes,
@@ -353,7 +358,9 @@ class SenderElement(dbus.service.Object):
 
         if is_get_max_brightness_status(payload):
             if (
-                self.runtime.args.command not in ("get-max", "set-max")
+                self.runtime.args.command not in (
+                    "get-max", "set-max", "blackout", "restore-blackout"
+                )
                 or not self.runtime.get_max_started
             ):
                 print(
@@ -369,7 +376,7 @@ class SenderElement(dbus.service.Object):
                 source=source_int,
                 key_index=int(key_index),
                 response_destination=response_destination,
-                requested_destination=self.runtime.args.destination,
+                requested_destination=self.runtime.current_brightness_destination,
                 expected_app_index=self.runtime.control.app_index,
                 sender_unicast=self.runtime.sender_unicast,
                 node_addresses=self.runtime.control.sanlight_nodes,
@@ -486,13 +493,29 @@ class BluezRuntime:
         self.ttl_requested = False
         self.ttl_confirmed = False
         self.remote_status_seen = False
+        self.set_max_generation = 0
         self.set_max_attempt = 0
         self.set_max_max_attempts = 0
         self.set_max_status_sources: set[int] = set()
         self.get_max_started = False
+        self.get_max_generation = 0
         self.get_max_attempt = 0
         self.get_max_status: tuple[int, int] | None = None
         self.get_max_malformed_status_seen = False
+        self.get_max_retry_pending = False
+        self.get_max_purpose = ""
+        self.current_brightness_destination = int(
+            getattr(args, "destination", 0) or 0
+        )
+        self.current_brightness_percent = getattr(args, "percent", None)
+        self.brightness_write_recorded = False
+        self.blackout_original_values: dict[int, int] = {}
+        self.blackout_targets: list[int] = []
+        self.preflight_queue: list[int] = []
+        self.restore_desired: dict[int, int] = {}
+        self.batch_write_queue: list[tuple[int, int]] = []
+        self.batch_write_results: list[tuple[int, int]] = []
+        self.blackout_snapshot_path: Path | None = None
         self.network_transmit_status: tuple[int, int, int, int] | None = None
         self.live_status: tuple[int, bytes] | None = None
         self.live_attempt = 0
@@ -563,6 +586,8 @@ class BluezRuntime:
                 "get-net-tx-sender",
                 "show-sender-state",
                 "set-max",
+                "blackout",
+                "restore-blackout",
                 "set-uptime",
                 "set-time",
                 "sync-now",
@@ -1048,7 +1073,13 @@ class BluezRuntime:
         elif self.args.command == "get-max":
             self.start_get_max_readback()
         elif self.args.command == "set-max":
-            self.send_max_brightness()
+            self.prepare_single_brightness_write(
+                self.args.destination, self.args.percent
+            )
+        elif self.args.command == "blackout":
+            self.start_blackout_preflight()
+        elif self.args.command == "restore-blackout":
+            self.start_restore_preflight()
         elif self.args.command in ("set-uptime", "set-time", "sync-now"):
             self.send_set_uptime()
         else:
@@ -1085,6 +1116,23 @@ class BluezRuntime:
         print(f"  sequenceNumber={sequence} (0x{sequence:06X})")
         print(f"  sequenceRemaining={remaining}")
         print(f"  secondsSinceLastHeard={last_heard}")
+        one_message_days = remaining / 86_400
+        verified_set_days_fast = remaining / (4 * 86_400)
+        verified_set_days_best = remaining / (2 * 86_400)
+        print(
+            "  estimatedBudgetAtOneOutgoingMessagePerSecond="
+            f"{one_message_days:.1f} days"
+        )
+        print(
+            "  estimatedBudgetAtOneVerifiedSetMaxPerSecond="
+            f"{verified_set_days_fast:.1f}..{verified_set_days_best:.1f} days "
+            "(4..2 outgoing messages per transaction)"
+        )
+        print(
+            "NOTE: use event-driven control and avoid per-second read or write "
+            "loops. Routine MaxBrightness automation should normally update no "
+            "more often than once per minute."
+        )
         if sequence > RECOVERY_TARGET_MAX:
             print(
                 "WARNING: sequenceNumber is above this project's recovery safety "
@@ -1272,50 +1320,197 @@ class BluezRuntime:
             f"Missing status from: {missing_text}."
         )
 
+    def _reset_brightness_write_transaction(self) -> None:
+        self.set_max_generation += 1
+        self.set_max_attempt = 0
+        self.set_max_max_attempts = max_attempts_for_destination(
+            self.current_brightness_destination,
+            self.control.sanlight_nodes,
+        )
+        self.set_max_status_sources = set()
+        self.get_max_started = False
+        self.get_max_status = None
+        self.get_max_retry_pending = False
+
+    def prepare_single_brightness_write(self, destination: int, percent: int) -> None:
+        self.current_brightness_destination = destination
+        self.current_brightness_percent = percent
+        self.batch_write_queue = []
+        self.batch_write_results = []
+        self._reset_brightness_write_transaction()
+        self.send_max_brightness()
+
+    def start_blackout_preflight(self) -> None:
+        targets = (
+            sorted(self.control.sanlight_nodes)
+            if self.args.destination is None
+            else [self.args.destination]
+        )
+        self.blackout_targets = targets
+        self.blackout_original_values = {}
+        self.preflight_queue = list(targets)
+        print(
+            "Starting read-only blackout preflight. Current MaxBrightness values "
+            "must be read before any 0% command is sent."
+        )
+        self._start_next_blackout_preflight_query()
+
+    def _start_next_blackout_preflight_query(self) -> None:
+        if not self.preflight_queue:
+            entries = [
+                BlackoutEntry(
+                    address=address,
+                    name=self.control.sanlight_nodes[address],
+                    percent=self.blackout_original_values[address],
+                )
+                for address in self.blackout_targets
+            ]
+            snapshot = create_blackout_snapshot(
+                state_dir=self.args.sender_state.parent,
+                mesh_uuid=self.control.mesh_uuid,
+                sender_uuid=self.sender.provisioner.uuid,
+                sender_unicast=self.sender_unicast,
+                entries=entries,
+            )
+            self.blackout_snapshot_path = snapshot.path
+            print(
+                f"Protected restore snapshot created at {snapshot.path}. "
+                "It contains node addresses and percentages, but no Mesh keys or tokens."
+            )
+            self.batch_write_queue = [
+                (address, 0)
+                for address in self.blackout_targets
+                if self.blackout_original_values[address] != 0
+            ]
+            self.batch_write_results = [
+                (address, 0)
+                for address in self.blackout_targets
+                if self.blackout_original_values[address] == 0
+            ]
+            if self.batch_write_results:
+                already_off = ", ".join(
+                    f"0x{address:04X}" for address, _ in self.batch_write_results
+                )
+                print(
+                    f"Already off; no 0% write needed for: {already_off}."
+                )
+            self.start_next_batch_brightness_write()
+            return
+
+        self.current_brightness_destination = self.preflight_queue.pop(0)
+        self.start_get_max_readback("blackout-preflight")
+
+    def start_restore_preflight(self) -> None:
+        snapshot = self.args.restore_snapshot
+        self.restore_desired = {
+            entry.address: entry.percent for entry in snapshot.entries
+        }
+        self.preflight_queue = [entry.address for entry in snapshot.entries]
+        self.batch_write_queue = []
+        self.batch_write_results = []
+        print(
+            f"Starting read-only restore preflight from {snapshot.path} "
+            f"(created {snapshot.created_at})."
+        )
+        self._start_next_restore_preflight_query()
+
+    def _start_next_restore_preflight_query(self) -> None:
+        if not self.preflight_queue:
+            if not self.batch_write_queue:
+                self.finish(
+                    "RESTORE-BLACKOUT COMPLETE. Every node already reports the "
+                    "percentage stored in the snapshot; no brightness write was sent."
+                )
+                return
+            self.start_next_batch_brightness_write()
+            return
+        self.current_brightness_destination = self.preflight_queue.pop(0)
+        self.start_get_max_readback("restore-preflight")
+
+    def start_next_batch_brightness_write(self) -> None:
+        if self.finished:
+            return
+        if not self.batch_write_queue:
+            summary = ", ".join(
+                f"0x{address:04X}={percent}%"
+                for address, percent in self.batch_write_results
+            ) or "none"
+            if self.args.command == "blackout":
+                self.finish(
+                    "BLACKOUT VERIFIED. All selected nodes report 0% (off). "
+                    f"Verified nodes: {summary}. Restore snapshot: "
+                    f"{self.blackout_snapshot_path}."
+                )
+            else:
+                self.finish(
+                    "RESTORE-BLACKOUT VERIFIED. Snapshot values were restored and "
+                    f"read back successfully: {summary}."
+                )
+            return
+
+        destination, percent = self.batch_write_queue.pop(0)
+        self.current_brightness_destination = destination
+        self.current_brightness_percent = percent
+        self._reset_brightness_write_transaction()
+        self.send_max_brightness()
+
     def send_max_brightness(self) -> None:
         if self.sender_node is None:
             self.fail("Canonical sender Node1 interface is unavailable")
             return
-        if self.set_max_max_attempts == 0:
-            self.set_max_max_attempts = max_attempts_for_destination(
-                self.args.destination,
-                self.control.sanlight_nodes,
-            )
-        self.set_max_attempt += 1
-        attempt = self.set_max_attempt
-        # Defensive second validation remains inside the PDU builder.
-        payload = build_set_max_brightness_pdu(self.args.percent)
-        description = validate_destination(self.control, self.args.destination)
+        destination = self.current_brightness_destination
+        percent = self.current_brightness_percent
+        if percent is None:
+            self.fail("Brightness transaction has no requested percentage")
+            return
+        attempt = self.set_max_attempt + 1
+        self.set_max_attempt = attempt
+        generation = self.set_max_generation
+        payload = build_blackout_pdu() if percent == 0 else build_set_max_brightness_pdu(percent)
+        description = validate_destination(self.control, destination)
+        mode = "Blackout/0%" if percent == 0 else "SetMaxBrightness"
         print(
-            f"Sending SetMaxBrightness {self.args.percent}% attempt "
+            f"Sending {mode} {percent}% attempt "
             f"{attempt}/{self.set_max_max_attempts} to "
-            f"0x{self.args.destination:04X} ({description}); PDU={payload.hex()}"
+            f"0x{destination:04X} ({description}); PDU={payload.hex()}"
         )
         self.sender_node.Send(
             dbus.ObjectPath(SENDER_ELEMENT_PATH),
-            dbus.UInt16(self.args.destination),
+            dbus.UInt16(destination),
             dbus.UInt16(self.control.app_index),
             empty_options(),
             byte_array(payload),
-            reply_handler=lambda current_attempt=attempt: self.on_set_max_send_accepted(
-                current_attempt
+            reply_handler=lambda current_generation=generation, current_attempt=attempt: self.on_set_max_send_accepted(
+                current_generation, current_attempt
             ),
             error_handler=lambda error: self.fail(
                 f"Canonical sender Node1.Send failed: {error}"
             ),
         )
 
-    def on_set_max_send_accepted(self, attempt: int) -> None:
-        if self.finished:
+    def on_set_max_send_accepted(self, generation: int, attempt: int) -> None:
+        if self.finished or generation != self.set_max_generation:
             return
+        if not self.brightness_write_recorded:
+            destination_label = (
+                "all"
+                if self.args.command == "blackout" and self.args.destination is None
+                else f"0x{self.current_brightness_destination:04X}"
+            )
+            record_brightness_write(
+                self.args.brightness_write_rate_path,
+                command=self.args.command,
+                destination=destination_label,
+            )
+            self.brightness_write_recorded = True
         print(
             "Access message accepted for Mesh transmission "
             f"(attempt {attempt}/{self.set_max_max_attempts})."
         )
         self.timeout(
             SET_MAX_STATUS_TIMEOUT_SECONDS,
-            lambda current_attempt=attempt: self.finish_or_retry_set_max(
-                current_attempt
+            lambda current_generation=generation, current_attempt=attempt: self.finish_or_retry_set_max(
+                current_generation, current_attempt
             ),
         )
 
@@ -1327,14 +1522,20 @@ class BluezRuntime:
             "Received matching SANlight SetMaxBrightness status "
             f"(vendor opcode 0x07) from 0x{source:04X}."
         )
-        if self.args.destination in self.control.sanlight_nodes:
-            self.start_get_max_readback()
+        if self.current_brightness_destination in self.control.sanlight_nodes:
+            self.start_get_max_readback("verification")
 
-    def finish_or_retry_set_max(self, attempt: int) -> None:
-        if self.finished or attempt != self.set_max_attempt or self.get_max_started:
+    def finish_or_retry_set_max(self, generation: int, attempt: int) -> None:
+        if (
+            self.finished
+            or generation != self.set_max_generation
+            or attempt != self.set_max_attempt
+            or self.get_max_started
+        ):
             return
 
-        if self.args.destination in self.control.groups:
+        destination = self.current_brightness_destination
+        if destination in self.control.groups:
             sources = ", ".join(
                 f"0x{source:04X}" for source in sorted(self.set_max_status_sources)
             ) or "none"
@@ -1346,7 +1547,7 @@ class BluezRuntime:
             return
 
         if self.set_max_status_sources:
-            self.start_get_max_readback()
+            self.start_get_max_readback("verification")
             return
 
         if self.set_max_attempt < self.set_max_max_attempts:
@@ -1363,30 +1564,34 @@ class BluezRuntime:
             "write attempts. Starting read-only GetMaxBrightness verification; "
             "the write may still have succeeded."
         )
-        self.start_get_max_readback()
+        self.start_get_max_readback("verification")
 
     def retry_set_max(self) -> None:
         if self.finished or self.set_max_status_sources or self.get_max_started:
             return
         self.send_max_brightness()
 
-    def start_get_max_readback(self) -> None:
+    def start_get_max_readback(self, purpose: str | None = None) -> None:
         if self.finished or self.get_max_started:
             return
         if self.sender_node is None:
             self.fail("Canonical sender Node1 interface is unavailable")
             return
-        if self.args.destination not in self.control.sanlight_nodes:
-            self.fail("GetMaxBrightness readback requires a unicast lamp node")
+        if self.current_brightness_destination not in self.control.sanlight_nodes:
+            self.fail("GetMaxBrightness requires a unicast lamp node")
             return
 
+        self.get_max_generation += 1
         self.get_max_started = True
+        self.get_max_purpose = purpose or (
+            "query" if self.args.command == "get-max" else "verification"
+        )
         self.get_max_attempt = 0
         self.get_max_status = None
         self.get_max_malformed_status_seen = False
         self.get_max_retry_pending = False
 
-        if self.args.command == "set-max":
+        if self.get_max_purpose == "verification":
             ack_text = (
                 "matching 0x07 acknowledgement received"
                 if self.set_max_status_sources
@@ -1396,8 +1601,14 @@ class BluezRuntime:
                 "Starting read-only GetMaxBrightness verification "
                 f"({ack_text})."
             )
-        else:
+        elif self.get_max_purpose == "query":
             print("Starting read-only GetMaxBrightness query.")
+        else:
+            print(
+                "Reading current MaxBrightness for "
+                f"0x{self.current_brightness_destination:04X} "
+                f"({self.get_max_purpose})."
+            )
 
         self.send_get_max_brightness()
 
@@ -1410,32 +1621,32 @@ class BluezRuntime:
 
         self.get_max_attempt += 1
         attempt = self.get_max_attempt
+        generation = self.get_max_generation
         payload = build_get_max_brightness_pdu()
-        description = validate_destination(self.control, self.args.destination)
-        action = (
-            "verification" if self.args.command == "set-max" else "query"
-        )
+        destination = self.current_brightness_destination
+        description = validate_destination(self.control, destination)
+        action = self.get_max_purpose.replace("-", " ")
         print(
             f"Sending read-only GetMaxBrightness {action} attempt "
             f"{attempt}/{GET_MAX_MAX_ATTEMPTS} to "
-            f"0x{self.args.destination:04X} ({description}); PDU={payload.hex()}"
+            f"0x{destination:04X} ({description}); PDU={payload.hex()}"
         )
         self.sender_node.Send(
             dbus.ObjectPath(SENDER_ELEMENT_PATH),
-            dbus.UInt16(self.args.destination),
+            dbus.UInt16(destination),
             dbus.UInt16(self.control.app_index),
             empty_options(),
             byte_array(payload),
-            reply_handler=lambda current_attempt=attempt: self.on_get_max_send_accepted(
-                current_attempt
+            reply_handler=lambda current_generation=generation, current_attempt=attempt: self.on_get_max_send_accepted(
+                current_generation, current_attempt
             ),
             error_handler=lambda error: self.fail(
                 f"Canonical sender Node1.Send GetMaxBrightness failed: {error}"
             ),
         )
 
-    def on_get_max_send_accepted(self, attempt: int) -> None:
-        if self.finished:
+    def on_get_max_send_accepted(self, generation: int, attempt: int) -> None:
+        if self.finished or generation != self.get_max_generation:
             return
         print(
             "GetMaxBrightness accepted for Mesh transmission "
@@ -1443,44 +1654,87 @@ class BluezRuntime:
         )
         self.timeout(
             GET_MAX_STATUS_TIMEOUT_SECONDS,
-            lambda current_attempt=attempt: self.finish_or_retry_get_max(
-                current_attempt
+            lambda current_generation=generation, current_attempt=attempt: self.finish_or_retry_get_max(
+                current_generation, current_attempt
             ),
         )
+
+    @staticmethod
+    def _reported_brightness_text(value: int) -> str:
+        if value == 0:
+            return "0% (off)"
+        if 1 <= value <= 19:
+            return f"{value}% (unexpected value below the supported on-range)"
+        return f"{value}%"
 
     def on_get_max_status(self, source: int, value: int) -> None:
         if self.finished:
             return
         self.get_max_status = (source, value)
+        value_text = self._reported_brightness_text(value)
         print(
             "Received matching SANlight GetMaxBrightness status "
-            f"(vendor opcode 0x09) from 0x{source:04X}: {value}%."
+            f"(vendor opcode 0x09) from 0x{source:04X}: {value_text}."
         )
+        purpose = self.get_max_purpose
 
-        if self.args.command == "get-max":
+        if purpose == "query":
             self.finish(
                 f"GET-MAX COMPLETE. Node 0x{source:04X} reports "
-                f"MaxBrightness {value}%."
+                f"MaxBrightness {value_text}."
             )
             return
 
-        if value == self.args.percent:
+        if purpose == "blackout-preflight":
+            if 1 <= value <= 19:
+                self.finish(
+                    f"BLACKOUT ABORTED. Node 0x{source:04X} reports {value}%, "
+                    "which this project cannot safely restore. No 0% command was sent.",
+                    2,
+                )
+                return
+            self.blackout_original_values[source] = value
+            self.get_max_started = False
+            self._start_next_blackout_preflight_query()
+            return
+
+        if purpose == "restore-preflight":
+            desired = self.restore_desired[source]
+            if value == desired:
+                print(
+                    f"Node 0x{source:04X} already reports {value_text}; no restore "
+                    "write is needed for this node."
+                )
+                self.batch_write_results.append((source, value))
+            else:
+                self.batch_write_queue.append((source, desired))
+            self.get_max_started = False
+            self._start_next_restore_preflight_query()
+            return
+
+        requested = self.current_brightness_percent
+        if value == requested:
             ack_text = (
                 "matching 0x07 acknowledgement was also received"
                 if self.set_max_status_sources
                 else "0x07 acknowledgement was not observed"
             )
-            self.finish(
-                f"SET-MAX VERIFIED. Node 0x{source:04X} reports "
-                f"MaxBrightness {value}% as requested; {ack_text}."
-            )
+            if self.args.command == "set-max":
+                self.finish(
+                    f"SET-MAX VERIFIED. Node 0x{source:04X} reports "
+                    f"MaxBrightness {value_text} as requested; {ack_text}."
+                )
+            else:
+                self.batch_write_results.append((source, value))
+                self.get_max_started = False
+                self.start_next_batch_brightness_write()
             return
 
         if self.get_max_attempt < GET_MAX_MAX_ATTEMPTS:
             print(
                 f"Readback mismatch after attempt {self.get_max_attempt}/"
-                f"{GET_MAX_MAX_ATTEMPTS}: requested {self.args.percent}%, "
-                f"reported {value}%. Retrying the read-only query in "
+                f"{GET_MAX_MAX_ATTEMPTS}: requested {requested}%, "
+                f"reported {value_text}. Retrying the read-only query in "
                 f"{GET_MAX_RETRY_DELAY_SECONDS} second."
             )
             self.get_max_status = None
@@ -1488,13 +1742,17 @@ class BluezRuntime:
             return
 
         self.finish(
-            f"SET-MAX VERIFICATION MISMATCH. Node 0x{source:04X} reports "
-            f"MaxBrightness {value}%, but {self.args.percent}% was requested.",
+            f"BRIGHTNESS VERIFICATION MISMATCH. Node 0x{source:04X} reports "
+            f"MaxBrightness {value_text}, but {requested}% was requested.",
             MAX_BRIGHTNESS_MISMATCH_EXIT_CODE,
         )
 
-    def finish_or_retry_get_max(self, attempt: int) -> None:
-        if self.finished or attempt != self.get_max_attempt:
+    def finish_or_retry_get_max(self, generation: int, attempt: int) -> None:
+        if (
+            self.finished
+            or generation != self.get_max_generation
+            or attempt != self.get_max_attempt
+        ):
             return
         if self.get_max_status is not None:
             return
@@ -1519,11 +1777,20 @@ class BluezRuntime:
             if self.get_max_malformed_status_seen
             else ""
         )
-        if self.args.command == "get-max":
+        if self.get_max_purpose == "query":
             self.finish(
                 "GET-MAX UNCONFIRMED. BlueZ accepted the read-only query, but "
                 f"no valid matching 0x09 status was received after "
                 f"{GET_MAX_MAX_ATTEMPTS} attempts.{malformed_text}",
+                MAX_BRIGHTNESS_UNCONFIRMED_EXIT_CODE,
+            )
+            return
+
+        if self.get_max_purpose in ("blackout-preflight", "restore-preflight"):
+            self.finish(
+                f"{self.args.command.upper()} ABORTED. A current MaxBrightness "
+                "value could not be read safely; no further brightness write was "
+                f"started.{malformed_text}",
                 MAX_BRIGHTNESS_UNCONFIRMED_EXIT_CODE,
             )
             return
@@ -1534,7 +1801,7 @@ class BluezRuntime:
             else "No matching 0x07 acknowledgement was received, and "
         )
         self.finish(
-            f"SET-MAX UNVERIFIED. {ack_text}no valid GetMaxBrightness "
+            f"BRIGHTNESS WRITE UNVERIFIED. {ack_text}no valid GetMaxBrightness "
             f"readback was received after {GET_MAX_MAX_ATTEMPTS} attempts."
             f"{malformed_text} Reconnect the SANlight app to verify the value.",
             MAX_BRIGHTNESS_UNCONFIRMED_EXIT_CODE,

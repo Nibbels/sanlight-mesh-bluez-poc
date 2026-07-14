@@ -54,9 +54,15 @@ def validate_max_brightness(percent: int) -> int:
 
 
 def build_set_max_brightness_pdu(percent: int) -> bytes:
+    """Build the ordinary MaxBrightness write; 0 remains intentionally forbidden."""
     return _vendor_opcode(SANLIGHT_SET_MAX_BRIGHTNESS_OPCODE) + bytes(
         (validate_max_brightness(percent),)
     )
+
+
+def build_blackout_pdu() -> bytes:
+    """Build the explicit 0% (off) command used only by blackout workflows."""
+    return _vendor_opcode(SANLIGHT_SET_MAX_BRIGHTNESS_OPCODE) + b"\x00"
 
 
 def is_set_max_brightness_status(data: bytes) -> bool:
@@ -81,20 +87,29 @@ def get_max_brightness_status_parameters(data: bytes) -> bytes:
     return data[3:]
 
 
-def get_max_brightness_status_value(data: bytes) -> int:
-    """Decode a validated one-byte GetMaxBrightness status value.
+def validate_reported_max_brightness(percent: int) -> int:
+    """Validate a value reported by a dimmer.
 
-    Reverse engineering and the earlier working PoC indicate that opcode 0x09
-    carries exactly one MaxBrightness percentage byte. Be deliberately strict:
-    additional or missing bytes are a protocol anomaly, not silent confirmation.
+    Reading and writing intentionally have different policies: 0 is a legitimate
+    reported off state, while the ordinary ``set-max`` command remains restricted
+    to 20..100. Values 1..19 are retained for diagnostics instead of being hidden.
     """
+    if isinstance(percent, bool) or not isinstance(percent, int):
+        raise ValueError("reported max brightness must be an integer")
+    if not 0 <= percent <= 100:
+        raise ValueError("reported max brightness must be between 0 and 100")
+    return percent
+
+
+def get_max_brightness_status_value(data: bytes) -> int:
+    """Decode the one-byte GetMaxBrightness status value, including 0% off."""
 
     parameters = get_max_brightness_status_parameters(data)
     if len(parameters) != 1:
         raise ValueError(
             "SANlight GetMaxBrightness Status must contain exactly one value byte"
         )
-    return validate_max_brightness(parameters[0])
+    return validate_reported_max_brightness(parameters[0])
 
 
 def build_get_uptime_brightness_pdu() -> bytes:

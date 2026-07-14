@@ -51,7 +51,10 @@ class SourceSecurityTest(unittest.TestCase):
 class SetupSafetyTest(unittest.TestCase):
     def test_setup_contains_no_lamp_write_command(self):
         setup = (ROOT / "scripts" / "setup-all.sh").read_text(encoding="utf-8")
-        for command in ("set-max", "set-time", "set-uptime", "sync-now"):
+        for command in (
+            "set-max", "blackout", "restore-blackout",
+            "set-time", "set-uptime", "sync-now"
+        ):
             self.assertNotIn(command, setup)
 
     def test_service_does_not_hardcode_wrong_rfkill_path(self):

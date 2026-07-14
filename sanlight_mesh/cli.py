@@ -26,6 +26,15 @@ from .protocol import (
 )
 from .locking import LockError, exclusive_runtime_lock
 from .state import StateError
+from .blackout_state import (
+    load_blackout_snapshot,
+    resolve_blackout_snapshot_path,
+)
+from .traffic_safety import (
+    BRIGHTNESS_WRITE_MIN_INTERVAL_SECONDS,
+    BRIGHTNESS_WRITE_STATE_NAME,
+    check_brightness_write_rate,
+)
 from .sequence_recovery import (
     SequenceRecoveryError,
     parse_sequence_target,
@@ -159,6 +168,55 @@ def build_parser() -> argparse.ArgumentParser:
     )
     set_max.add_argument("destination", type=parse_destination)
     set_max.add_argument("percent", type=int)
+    set_max.add_argument(
+        "--allow-fast-control",
+        action="store_true",
+        help=(
+            "override the persistent 10-second brightness-write guard; intended "
+            "only for deliberate diagnostics after reviewing sequence usage"
+        ),
+    )
+
+    blackout = commands.add_parser(
+        "blackout",
+        help=(
+            "explicitly set one lamp or all detected lamps to 0%% (off), after "
+            "saving their current values for restoration"
+        ),
+    )
+    blackout.add_argument("destination", type=parse_destination_or_all)
+    blackout.add_argument(
+        "--confirm-blackout",
+        action="store_true",
+        help=(
+            "confirm that 0%% output is intended and the connected dimmer series "
+            "supports it"
+        ),
+    )
+    blackout.add_argument(
+        "--allow-fast-control",
+        action="store_true",
+        help="override the persistent 10-second brightness-write guard",
+    )
+
+    restore_blackout = commands.add_parser(
+        "restore-blackout",
+        help=(
+            "restore the per-node percentages from a protected blackout snapshot; "
+            "use 'latest' for the newest snapshot"
+        ),
+    )
+    restore_blackout.add_argument("snapshot")
+    restore_blackout.add_argument(
+        "--confirm-restore",
+        action="store_true",
+        help="confirm that the protected blackout snapshot should be applied",
+    )
+    restore_blackout.add_argument(
+        "--allow-fast-control",
+        action="store_true",
+        help="override the persistent 10-second brightness-write guard",
+    )
 
     set_uptime = commands.add_parser(
         "set-uptime", help="set lamp clock using seconds since local midnight"
@@ -222,6 +280,20 @@ def validate_args(args: argparse.Namespace, control: MeshMaterial) -> None:
     elif args.command == "set-max":
         validate_destination(control, args.destination)
         validate_max_brightness(args.percent)
+    elif args.command == "blackout":
+        if not args.confirm_blackout:
+            raise ValueError(
+                "blackout requires --confirm-blackout after verifying that the "
+                "connected dimmer series supports 0% output"
+            )
+        if args.destination is None:
+            if not control.sanlight_nodes:
+                raise ValueError("CDB contains no SANlight lamp nodes for blackout all")
+        else:
+            _validate_node_destination(control, args.destination, "blackout")
+    elif args.command == "restore-blackout":
+        if not args.confirm_restore:
+            raise ValueError("restore-blackout requires --confirm-restore")
     elif args.command in ("set-uptime", "set-time", "sync-now"):
         if args.destination is None:
             if not control.sanlight_nodes:
@@ -312,6 +384,21 @@ def _run_sequence_recovery(
     return 0
 
 
+def _prepare_restore_snapshot(
+    args: argparse.Namespace, control: MeshMaterial, sender: MeshMaterial
+) -> None:
+    if args.command != "restore-blackout":
+        return
+    path = resolve_blackout_snapshot_path(args.snapshot, args.sender_state.parent)
+    args.restore_snapshot = load_blackout_snapshot(
+        path,
+        expected_mesh_uuid=control.mesh_uuid,
+        expected_sender_uuid=sender.provisioner.uuid,
+        expected_sender_unicast=sender.provisioner.unicast,
+        known_nodes=control.sanlight_nodes,
+    )
+
+
 def _run_runtime(
     args: argparse.Namespace, control: MeshMaterial, sender: MeshMaterial
 ) -> int:
@@ -327,6 +414,29 @@ def _run_runtime(
     lock_file = args.sender_state.parent / "runtime.lock"
     try:
         with exclusive_runtime_lock(lock_file):
+            if args.command in ("set-max", "blackout", "restore-blackout"):
+                rate_path = args.sender_state.parent / BRIGHTNESS_WRITE_STATE_NAME
+                decision = check_brightness_write_rate(
+                    rate_path,
+                    allow_fast_control=bool(args.allow_fast_control),
+                )
+                args.brightness_write_rate_path = rate_path
+                if not decision.allowed:
+                    raise CliError(
+                        "brightness write rejected by the safety guard: wait "
+                        f"{decision.wait_seconds:.1f} more seconds or use "
+                        "--allow-fast-control only for a deliberate diagnostic. "
+                        "Do not drive MaxBrightness in a per-second loop; every "
+                        "outgoing Mesh message consumes the sender's 24-bit "
+                        "Sequence Number."
+                    )
+                if args.allow_fast_control:
+                    print(
+                        "WARNING: --allow-fast-control bypasses the "
+                        f"{BRIGHTNESS_WRITE_MIN_INTERVAL_SECONDS:.0f}-second "
+                        "brightness-write guard. Sequence numbers are still "
+                        "consumed normally."
+                    )
             return BluezRuntime(args, control, sender).run()
     except (BluezRuntimeError, LockError) as exc:
         raise CliError(str(exc)) from exc
@@ -343,6 +453,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         control, sender = _load_material(args)
         validate_args(args, control)
+        _prepare_restore_snapshot(args, control, sender)
 
         if args.command == "inspect":
             print(

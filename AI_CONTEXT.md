@@ -53,7 +53,7 @@ State writes must remain atomic. `.state/` is mode `0700`; JSON state files are 
   group-wide confirmation; automatic group-wide readback is not claimed.
 - `0xFFFF` is rejected.
 - Destinations must exist in the CDB.
-- `get-live`, `get-max`, `get-net-tx`, `set-time`, `set-uptime` and targeted `sync-now` require unicast nodes.
+- `get-live`, `get-net-tx`, `set-time`, `set-uptime` and targeted `sync-now` require unicast nodes.
 - Destination `all` expands to individually detected SANlight vendor-model nodes; it is not a Mesh all-nodes broadcast.
 - Setup must never call `set-max`, `set-time`, `set-uptime` or `sync-now`.
 - Setup may configure the local canonical sender and set its Bluetooth Mesh Default TTL to 5.
@@ -108,8 +108,7 @@ Company ID: `0x0A8B`, encoded little-endian as `8B 0A` after a three-octet vendo
 - SetMaxBrightness: opcode `0x06`, access prefix `C6 8B 0A`, one percent byte
 - SetMaxBrightness Status: `C7 8B 0A`
 - GetMaxBrightness: `C8 8B 0A`
-- GetMaxBrightness Status: `C9 8B 0A <PERCENT>`; the validated form has
-  exactly one percentage byte
+- GetMaxBrightness Status: `C9 8B 0A <PERCENT>`; the validated form has exactly one byte. Reported `0` means off, `20..100` is the supported on-range, and `1..19` is retained as an unexpected diagnostic.
 - SetUptime: `CA 8B 0A` + uint32 little-endian milliseconds
 - SetUptime Status: `CB 8B 0A`
 - GetUptimeAndBrightness: `CC 8B 0A`
@@ -220,6 +219,42 @@ Project rules:
 - do not implement manual IV Index increments as a shortcut. IV Update is a coordinated network procedure.
 
 The receiver's exact RPL threshold is not exposed by standard Config Models or ordinary advertisements. A key-assisted packet capture can reveal a transmitted Network PDU's sequence, not a lamp's internal stored threshold.
+
+## MaxBrightness write/readback and blackout invariants
+
+Hardware validation on both lamp nodes confirmed:
+
+- `get-max` (`C8 8B 0A`) returns a strict `C9 8B 0A <PERCENT>` status;
+- `set-max 0003 48` returned `0x07`, then `get-max` read back `48`;
+- restoring `68` returned `0x07`, then `get-max` read back `68`;
+- a missing `0x07` can occur even when the lamp applied the value, so readback is authoritative;
+- one read-only query required its second bounded attempt during validation, confirming that a single missing status must not be overinterpreted.
+
+Safety rules:
+
+- ordinary `set-max` remains strictly `20..100`; never weaken it to accept zero;
+- `get-max` must decode `0..100`, because `0` is a legitimate reported off state;
+- explicit 0% output uses only `blackout ... --confirm-blackout`;
+- blackout must pre-read every selected unicast node, create a protected restore snapshot, send 0 only to nodes not already off, and verify `get-max = 0`;
+- blackout never uses a group destination internally, because one group response cannot verify every lamp;
+- restore validates Mesh/sender identity and CDB membership, skips already matching nodes, and verifies every write;
+- Q-Series Gen2 has a 20% minimum; 0% support must be confirmed by the operator for EVO/EVO COMPACT/STIXX hardware;
+- 0% is commanded light output off, not electrical mains isolation.
+
+## Outgoing traffic and sequence budget
+
+Every new outgoing access/config message consumes one value from the sender's 24-bit Sequence Number space. Read-only queries consume sequence values too. A verified unicast `set-max` normally uses two messages (write + readback) and can use four when both bounded retries occur. At one verified command per second, the full space lasts only about 49..97 days from zero; a 90-day run can therefore exhaust it.
+
+Project control policy:
+
+- use event-driven updates and do not send unchanged values repeatedly;
+- routine MaxBrightness automation should normally update once per minute or slower;
+- never poll `get-max` or `get-live` every second;
+- enforce a persistent 10-second minimum between separate brightness-write commands;
+- `--allow-fast-control` is an explicit diagnostic override, not a normal control option;
+- the guard is only a last-resort bug brake. It does not make 10-second automation the recommended cadence;
+- the lamp-side profile remains responsible for smooth daily changes. Pi-side MaxBrightness is a coarse, infrequent limit.
+
 
 ## Next sensible milestones
 
