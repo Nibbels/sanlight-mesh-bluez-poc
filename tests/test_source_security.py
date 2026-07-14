@@ -58,5 +58,12 @@ class SetupSafetyTest(unittest.TestCase):
             installer,
         )
 
+    def test_test_runner_does_not_write_into_private_or_state_paths(self):
+        runner = (ROOT / "scripts" / "run-tests.sh").read_text(encoding="utf-8")
+        self.assertNotIn("python3 -m compileall -q .", runner)
+        self.assertIn("PYTHONDONTWRITEBYTECODE=1", runner)
+        self.assertIn("--exclude-dir=.state", runner)
+        self.assertIn("--exclude-dir=private", runner)
+
 if __name__ == "__main__":
     unittest.main()
