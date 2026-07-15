@@ -277,3 +277,25 @@ After the clean-image installation is validated:
 4. integrate ioBroker/MQTT in a separate adapter layer, not inside protocol/CDB modules.
 
 Automatic clock or brightness changes must remain explicit opt-in runtime behavior and must never become part of installation.
+
+
+## MQTT gateway feature branch
+
+Planned branch: `feature/mqtt-gateway`. The MQTT API is versioned independently under topic root `sanlightmesh/v1/<gateway-id>`.
+
+Implemented gateway boundary:
+
+- `sanlight_mqtt_gateway.py`: stable service entrypoint;
+- `gateway_config.py`: strict mode-0600 TOML config;
+- `gateway_protocol.py`: command validation, TTL and result envelope;
+- `gateway_queue.py`: bounded serialization and same-node setpoint coalescing;
+- `gateway_store.py`: atomic non-secret dedup and verified-state cache;
+- `gateway_executor.py`: typed, no-shell bridge to the validated CLI engine;
+- `mqtt_transport.py`: Paho connection, Last Will and retained state publishing;
+- `gateway_service.py`: orchestration, no-op suppression, expiry and state publishing.
+
+The MQTT service must never receive or publish CDB keys, DeviceKeys, BlueZ tokens, local file paths from clients, or arbitrary CLI options. Retained commands are rejected. Only verified values update retained node state.
+
+The first implementation intentionally keeps `bluetooth-meshd` persistent while using isolated CLI child transactions. This avoids unvalidated long-lived D-Bus object reuse and preserves the existing runtime lock/retry/readback behavior. A later in-process executor may replace this without changing MQTT API v1.
+
+A native ioBroker adapter is a separate future repository (`Nibbels/ioBroker.sanlightmesh`) and must depend only on MQTT API v1. Do not create it inside this Python repository or duplicate BlueZ logic there.

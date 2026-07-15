@@ -13,3 +13,6 @@ Validated platform: **Raspberry Pi OS Lite 64-bit / Debian 13 trixie, BlueZ 5.82
 - **[SETUP.md](SETUP.md)** — minimal first-time installation
 - **[INSTRUCTIONS.md](INSTRUCTIONS.md)** — commands, operation, maintenance and troubleshooting
 - **[AI_CONTEXT.md](AI_CONTEXT.md)** — architecture, protocol findings and continuation context
+- **[docs/MQTT_GATEWAY.md](docs/MQTT_GATEWAY.md)** — optional Wi-Fi/MQTT edge gateway and ioBroker path
+
+> Unofficial community project. Not affiliated with or endorsed by SANlight GmbH.
