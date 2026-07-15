@@ -8,6 +8,8 @@ sanlightmesh/v1/<gateway-id>
 
 The protocol major version is part of the topic. Breaking changes require a new major topic such as `v2`.
 
+Examples below use the illustrative unicast address `1234`. Replace it with an address reported by `list-nodes` for the actual CDB.
+
 ## Topics
 
 | Topic | Retained | Purpose |
@@ -19,7 +21,12 @@ The protocol major version is part of the topic. Breaking changes require a new 
 | `command` | **never** | ioBroker/client requests |
 | `result/<COMMAND_ID>` | no | final result for one request ID |
 
-Command messages must be non-retained. Recommended QoS is 1. Application-level command IDs provide deduplication because QoS 1 may redeliver. The gateway uses MQTT 5 subscription options `retainAsPublished=true` and `retainHandling=DO_NOT_SEND` so a live retained publication remains detectable while retained commands stored during downtime are never replayed to the gateway.
+Command messages must be non-retained. Recommended QoS is 1. Application-level command IDs provide deduplication because QoS 1 may redeliver.
+
+The gateway uses MQTT 5 subscription options `retainAsPublished=true` and `retainHandling=DO_NOT_SEND`:
+
+- a live retained publication remains detectable and is rejected;
+- retained commands stored while the gateway is offline are not delivered after reconnect.
 
 ## Common command fields
 
@@ -27,7 +34,7 @@ Command messages must be non-retained. Recommended QoS is 1. Application-level c
 {
   "id": "unique-command-id",
   "action": "refresh",
-  "target": "0003",
+  "target": "1234",
   "createdAt": "2026-07-15T20:30:00Z",
   "ttlSeconds": 30
 }
@@ -49,9 +56,9 @@ Rules:
 
 ```json
 {
-  "id": "refresh-0003-001",
+  "id": "refresh-1234-001",
   "action": "refresh",
-  "target": "0003",
+  "target": "1234",
   "createdAt": "2026-07-15T20:30:00Z",
   "ttlSeconds": 30
 }
@@ -63,16 +70,18 @@ Use target `all` to refresh every detected SANlight node. Refresh is read-only b
 
 ```json
 {
-  "id": "set-0003-48-001",
+  "id": "set-1234-48-001",
   "action": "set-max",
-  "target": "0003",
+  "target": "1234",
   "value": 48,
   "createdAt": "2026-07-15T20:30:00Z",
   "ttlSeconds": 30
 }
 ```
 
-`value` is strictly `20..100`. Zero is rejected here and exists only in the explicit blackout workflow. A successful result means the hardened CLI read the configured percentage back from the lamp.
+`value` is strictly `20..100`. Zero is rejected here and exists only in the explicit blackout workflow. A successful `verified` result means the hardened CLI read the configured percentage back from the lamp.
+
+Separate brightness writes are subject to the persistent ten-second guard. A command whose TTL expires while waiting for that guard returns `expired` with `details.meshMessagesSent = 0`.
 
 ### Blackout
 
@@ -109,15 +118,15 @@ MQTT v1 deliberately accepts only `latest`; callers cannot supply local paths.
 ```json
 {
   "protocolVersion": 1,
-  "id": "set-0003-48-001",
+  "id": "set-1234-48-001",
   "ok": true,
   "status": "verified",
-  "message": "Node 0003 reports MaxBrightness 48% as requested.",
+  "message": "Node 1234 reports MaxBrightness 48% as requested.",
   "action": "set-max",
-  "target": "0003",
+  "target": "1234",
   "requested": 48,
   "details": {
-    "reported": {"0003": 48},
+    "reported": {"1234": 48},
     "exitCode": 0
   },
   "timestamp": "2026-07-15T20:30:04Z"
@@ -142,13 +151,15 @@ Important statuses include:
 
 `indeterminate-after-restart` means the gateway persisted an in-flight marker, then stopped before it could store a final result. The same command ID is deliberately not executed again. Refresh the node state and decide whether a new write with a new ID is needed.
 
+When a completed QoS 1 command ID is delivered again, the gateway republishes the stored final result without a second Mesh transaction. The result details include `duplicateDelivery: true`.
+
 ## Node state example
 
 ```json
 {
   "protocolVersion": 1,
-  "address": "0003",
-  "name": "3-60 1.5 Rechts",
+  "address": "1234",
+  "name": "Example lamp",
   "maxBrightness": 48,
   "off": false,
   "verified": true,
@@ -156,7 +167,18 @@ Important statuses include:
 }
 ```
 
-Only verified values update retained node state.
+Only verified values update retained node state. `maxBrightness: 0` with `off: true` is valid only after a verified explicit blackout or an external change observed by refresh.
+
+## Gateway information
+
+The retained `gateway/info` object includes:
+
+- `protocolVersion` and `serviceVersion`;
+- gateway and sender identifiers;
+- detected node metadata;
+- current sender Sequence Number and remaining 24-bit budget;
+- `sequenceStatus`;
+- effective write policy, including minimum and recommended intervals.
 
 ## Schemas
 

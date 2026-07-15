@@ -1,27 +1,98 @@
-# ioBroker integration plan
+# ioBroker integration
 
-## First integration: generic MQTT
+## Current validated integration: generic MQTT adapter
 
-Use an MQTT broker reachable by both Raspberry Pis. The ioBroker MQTT adapter can subscribe to the gateway topics, or ioBroker can connect to an external Mosquitto broker.
+The validated integration uses an external Mosquitto broker and ioBroker's generic MQTT adapter in client/subscriber mode.
 
-Suggested ioBroker mapping:
+This is sufficient for automation and monitoring in the tested installation. It is intentionally a generic JSON-string integration rather than a polished, typed native adapter.
+
+## Validated adapter behavior
+
+The generic adapter subscribes to the gateway tree and creates objects below an instance such as:
 
 ```text
-sanlightmesh.0.info.connection
-sanlightmesh.0.gateway.sequenceNumber
-sanlightmesh.0.gateway.sequenceRemaining
-sanlightmesh.0.nodes.0002.name
-sanlightmesh.0.nodes.0002.maxBrightness
-sanlightmesh.0.nodes.0002.targetMaxBrightness
-sanlightmesh.0.nodes.0002.available
-sanlightmesh.0.nodes.0002.lastSeen
+mqtt.0.sanlightmesh.v1.<gateway-id>.availability
+mqtt.0.sanlightmesh.v1.<gateway-id>.gateway.info
+mqtt.0.sanlightmesh.v1.<gateway-id>.nodes.<node>.meta
+mqtt.0.sanlightmesh.v1.<gateway-id>.nodes.<node>.state
+mqtt.0.sanlightmesh.v1.<gateway-id>.result.<command-id>
 ```
 
-The desired target and reported value must remain distinct. A write to `targetMaxBrightness` publishes a command. `maxBrightness` changes only after the gateway publishes verified readback.
+A tree containing many `result` objects is expected: every unique command ID has its own non-retained result topic, and ioBroker keeps the created state object after the MQTT message has passed.
+
+The generic adapter stores JSON payloads as strings. For example, a node-state value contains serialized JSON with fields such as `maxBrightness`, `off`, `verified` and `verifiedAt`. This is normal for the generic integration; it is not yet a typed native object model.
+
+## Suggested MQTT adapter settings
+
+Validated shape:
+
+- connection mode: client/subscriber;
+- broker URL and port of the external Mosquitto host;
+- dedicated ioBroker broker user with ACL-limited access;
+- subscribe to:
+  - `sanlightmesh/v1/<gateway-id>/availability`
+  - `sanlightmesh/v1/<gateway-id>/gateway/#`
+  - `sanlightmesh/v1/<gateway-id>/nodes/#`
+  - `sanlightmesh/v1/<gateway-id>/result/#`
+- prevent ordinary ioBroker states from being published automatically, for example with a deliberately non-matching own-state mask;
+- disable publish-on-connect;
+- disable automatic publication of states with `ack=true`;
+- keep separate publish/subscribe topic-name rewriting disabled unless deliberately required;
+- disable the persistent MQTT session for this command path;
+- disable retain for publications;
+- use QoS 1 where available.
+
+Adapter labels vary slightly by version. The invariant is that only the explicit `sendMessage2Client` call publishes gateway commands, and those commands are never retained.
+
+## Publish a command from JavaScript
+
+Use the MQTT adapter's `sendMessage2Client` command. The gateway command must be a fresh, non-retained JSON message:
+
+```javascript
+const gatewayId = 'sanlight-pi';
+const node = 'NODE_ADDRESS'; // replace with list-nodes output
+const command = {
+    id: `iobroker-refresh-${node}-${Date.now()}`,
+    action: 'refresh',
+    target: node,
+    createdAt: new Date().toISOString(),
+    ttlSeconds: 30,
+};
+
+sendTo(
+    'mqtt.0',
+    'sendMessage2Client',
+    {
+        topic: `sanlightmesh/v1/${gatewayId}/command`,
+        message: JSON.stringify(command),
+        retain: false,
+    },
+);
+```
+
+Read the corresponding result object after publication. The exact adapter call is intentionally small; long-running automation scripts should correlate by command ID, impose their own timeout and handle `verified`, `expired`, `superseded`, `rejected` and failure states explicitly.
+
+## Automation rules
+
+- Keep requested targets separate from verified reported state.
+- Update reported state only from `nodes/<NODE>/state` or a `verified` result.
+- Debounce UI sliders and sensor-driven changes.
+- Do not publish faster than the gateway's recommended interval unless performing a controlled diagnostic.
+- Generate a new command ID for a genuinely new action.
+- Use short TTLs so obsolete automation cannot execute late.
+- Never retain commands.
+- Require a separate explicit confirmation path for blackout and restore.
+- Surface `availability`, `sequenceStatus` and remaining sequence percentage.
+
+## Cleaning old result objects
+
+Deleting old ioBroker `result` state objects is optional housekeeping; it does not delete or replay MQTT commands on the broker. Do not delete retained `availability`, `gateway/info`, node metadata or node-state topics unless deliberately resetting the integration view.
+
+A future script or native adapter may keep only a bounded command history in typed states.
 
 ## Future native adapter
 
-Create a separate repository after MQTT v1 is hardware-validated:
+A native adapter should be a separate repository:
 
 ```text
 Repository: Nibbels/ioBroker.sanlightmesh
@@ -29,32 +100,21 @@ Adapter name: sanlightmesh
 Object root: sanlightmesh.0
 ```
 
-The adapter should contain its own MQTT client and provide:
+It should depend only on [MQTT_API.md](MQTT_API.md), not on SSH, local Python paths or the BlueZ implementation. Desirable features include:
 
-- broker/gateway configuration;
-- automatic node object creation from retained metadata;
-- typed writable target states;
-- target/report separation;
-- debounce before publishing slider changes;
-- request IDs and short expirations;
-- result/error mapping;
+- broker and gateway configuration;
+- automatic typed node objects from retained metadata;
+- writable target states distinct from verified reported states;
+- debounce and change detection;
+- command/result correlation;
 - explicit blackout and restore confirmations;
-- gateway availability and sequence-space warnings.
+- gateway availability and sequence-space warnings;
+- bounded result history.
 
-The adapter must not contain CDB keys, use Bluetooth remotely, invoke SSH, or duplicate the BlueZ implementation. It should reference this repository as its required gateway project and declare support for MQTT API v1.
+The native adapter must not contain CDB keys, invoke Bluetooth remotely, use SSH, or duplicate the gateway's BlueZ logic.
 
-## Repository cross-references
-
-Gateway README:
-
-```text
-Optional native ioBroker adapter: https://github.com/Nibbels/ioBroker.sanlightmesh
-```
-
-Adapter README:
+Required gateway repository:
 
 ```text
-Required gateway: https://github.com/Nibbels/sanlight-mesh-bluez-gateway
+https://github.com/Nibbels/sanlight-mesh-bluez-poc
 ```
-
-Rename the current gateway repository only after the MQTT service is validated and merged. Until then, keep the existing repository URL stable.

@@ -1,6 +1,6 @@
 # MQTT edge gateway
 
-This optional service turns the lamp-side Raspberry Pi into a Wi-Fi/Ethernet edge gateway:
+The optional MQTT service turns the lamp-side Raspberry Pi into an always-on LAN edge gateway:
 
 ```text
 ioBroker or another MQTT client
@@ -23,32 +23,33 @@ The private CDB, Mesh keys, DeviceKeys and BlueZ state remain only on the lamp-s
 
 This is an unofficial community project and is not affiliated with or endorsed by SANlight GmbH.
 
-## Development branch
+## Status
 
-Develop and validate this feature on:
+The gateway implementation is merged into `main` and hardware validated for the documented installation. It remains part of an unofficial PoC: there is no stable release/support contract, and deployments with different firmware, Mesh topology, broker or network-security requirements must be validated independently.
 
-```bash
-git switch -c feature/mqtt-gateway
-git push -u origin feature/mqtt-gateway
-```
+The completed validation covered:
 
-After hardware and broker testing, merge the branch back into `main`. Do not keep a permanent diverging gateway branch.
+- 97 offline unit/security tests on the target Raspberry Pi;
+- initial startup and retained metadata/state publication;
+- read-only refresh and verified `set-max`/restore;
+- rejection of ordinary `set-max` values below 20, including zero;
+- rejection of live retained commands with MQTT 5 retain preservation;
+- suppression of retained commands stored while the gateway was offline;
+- QoS 1 duplicate-ID deduplication across service restart;
+- TTL expiry before execution with `meshMessagesSent: 0`;
+- same-node command coalescing;
+- explicit blackout, zero readback and restore;
+- persistent ten-second write-rate limiting;
+- Last-Will `offline` and automatic reconnect;
+- Mosquitto restart, gateway restart and full lamp-side Raspberry Pi reboot;
+- generic ioBroker MQTT adapter subscription and command publishing;
+- unbuffered systemd journal output.
 
-## Why MQTT first
-
-The gateway protocol is intentionally independent of ioBroker. It can be tested with Mosquitto tools and the generic ioBroker MQTT adapter before a native adapter is created.
-
-A future native adapter should be a separate repository:
-
-```text
-Nibbels/ioBroker.sanlightmesh
-```
-
-It should depend on the versioned MQTT API documented in [MQTT_API.md](MQTT_API.md), not on the Python source tree and not on SSH or shell access.
+The validated service reported MQTT protocol version 1 and service version `0.1.1`. Version numbers may advance independently of this record.
 
 ## Runtime model
 
-`bluetooth-meshd` remains continuously active and owns `hci0`. The MQTT process remains continuously connected to the broker and serializes commands. For the first gateway release, each command invokes the already hardware-validated Python transaction engine as a child process using an argument vector—never through a shell.
+`bluetooth-meshd` remains continuously active and owns `hci0`. The MQTT process remains continuously connected to the broker and serializes commands. Each gateway command invokes the hardware-validated Python transaction engine as a child process using a fixed argument vector—never through a shell.
 
 This isolation is deliberate:
 
@@ -57,7 +58,13 @@ This isolation is deliberate:
 - a failed command cannot corrupt the long-running MQTT client;
 - MQTT input cannot select an executable, file path or arbitrary CLI option.
 
-A later in-process backend can replace the executor without changing MQTT v1.
+A later in-process backend may replace the executor without changing MQTT v1.
+
+## Prerequisites
+
+Complete [SETUP.md](../SETUP.md) first and verify at least one lamp with `get-live` or `get-max`.
+
+Run an MQTT broker reachable from both the lamp-side Raspberry Pi and the automation host. Mosquitto on the ioBroker host is a validated arrangement. Do not expose an unauthenticated broker to the internet.
 
 ## Configuration
 
@@ -77,7 +84,7 @@ Set at least:
 - optional username and `password_file`;
 - optional TLS CA certificate.
 
-Store the MQTT password in a separate mode-`0600` file. Do not put it in Git.
+Store the MQTT password in a separate mode-`0600` file. Do not put it in Git or directly in the TOML file.
 
 Validate without connecting to MQTT:
 
@@ -89,23 +96,46 @@ sudo python3 sanlight_mqtt_gateway.py \
 
 The check prints only redacted configuration and CDB metadata.
 
-## Install the service
-
-Complete [SETUP.md](../SETUP.md) first. Then:
+## Install and operate the service
 
 ```bash
 sudo bash ./scripts/install-mqtt-gateway.sh \
     --config private/sanlight-gateway.toml
 ```
 
-Status and logs:
+The installer adds Debian's `python3-paho-mqtt` package. The gateway requires Paho MQTT 2.x and MQTT 5 support.
+
+Check both lamp-side services:
 
 ```bash
-sudo systemctl status sanlight-mqtt-gateway.service
+systemctl is-enabled sanlight-meshd-generic.service
+systemctl is-active sanlight-meshd-generic.service
+systemctl is-enabled sanlight-mqtt-gateway.service
+systemctl is-active sanlight-mqtt-gateway.service
+```
+
+Status and immediate logs:
+
+```bash
+sudo systemctl status sanlight-mqtt-gateway.service --no-pager --full
 sudo journalctl -fu sanlight-mqtt-gateway.service
 ```
 
-The installer adds Debian's `python3-paho-mqtt` package. The gateway requires Paho MQTT 2.x and MQTT 5 support because MQTT 3.1.1 cannot reliably preserve the publisher's retain flag for a live subscription. It does not install a broker. Run Mosquitto or another MQTT broker on the ioBroker host or elsewhere on the trusted LAN.
+The installed unit uses `PYTHONUNBUFFERED=1`, so gateway messages should appear in the journal immediately rather than only during shutdown.
+
+## Update an installed gateway
+
+After updating the repository on `main`:
+
+```bash
+git switch main
+git pull --ff-only
+./scripts/run-tests.sh
+sudo bash ./scripts/install-mqtt-gateway.sh \
+    --config private/sanlight-gateway.toml
+```
+
+The installer updates the unit without resetting Mesh state. A reset must remain explicit.
 
 ## Traffic and Sequence Number safety
 
@@ -122,12 +152,12 @@ The gateway therefore:
 - persists an in-flight marker before execution so an interrupted command is not blindly repeated after restart;
 - coalesces rapid pending `set-max` commands for the same node;
 - can optionally suppress a write from a fresh verified cache, but this is disabled by default because the SANlight app may also change values;
-- preserves the existing persistent ten-second write guard;
+- preserves the persistent ten-second write guard;
 - recommends automation intervals of at least 60 seconds;
 - publishes `sequenceStatus` and remaining percentage in retained `gateway/info`;
 - refreshes state only every 30 minutes by default.
 
-Do not map a fast slider, continuously changing sensor or one-second control loop directly to MaxBrightness. Use thresholds and change detection in ioBroker.
+Do not map a fast slider, continuously changing sensor or one-second control loop directly to MaxBrightness. Use thresholds, debounce and change detection in ioBroker.
 
 ## Broker security
 
@@ -141,45 +171,69 @@ Gateway client:
   publish   sanlightmesh/v1/<gateway-id>/nodes/#
   publish   sanlightmesh/v1/<gateway-id>/result/#
 
-ioBroker client:
+Automation client:
   publish   sanlightmesh/v1/<gateway-id>/command
   subscribe sanlightmesh/v1/<gateway-id>/#
 ```
 
-Command messages must be non-retained. State, metadata and availability are retained.
+Command messages must be non-retained. State, metadata and availability are retained. Use separate least-privilege broker users for the gateway and automation client.
 
-For the staged first hardware run, follow [MQTT_TEST_PLAN.md](MQTT_TEST_PLAN.md).
+Plain MQTT credentials are visible to hosts able to inspect that LAN segment. Use a trusted isolated LAN/VLAN or configure TLS when this is not acceptable. TLS support exists in the gateway configuration, but the documented hardware run used plain MQTT on a trusted LAN and therefore did not validate a TLS deployment.
+
+Mosquitto deployment notes from the validated setup:
+
+- disable anonymous access and use separate ACL-limited gateway and automation users;
+- Mosquitto combines its main file and included fragments into one configuration, so settings such as `persistence_location` must be defined only once;
+- when a listener is bound to one specific interface address, keep that address stable and ensure the interface is available when Mosquitto starts;
+- the gateway installer installs the MQTT client dependency, not the broker or its users/ACLs.
 
 ## Test with Mosquitto clients
+
+Discover lamp addresses first:
+
+```bash
+python3 sanlight_canonical_sender_poc.py \
+    --cdb private/SANlightMesh.json \
+    list-nodes
+```
+
+Set shell variables from your own configuration:
+
+```bash
+BROKER=broker.example.lan
+GATEWAY_ID=sanlight-pi
+NODE=NODE_ADDRESS
+ROOT="sanlightmesh/v1/$GATEWAY_ID"
+```
+
+Replace `NODE_ADDRESS` with a unicast node reported by `list-nodes`.
 
 Subscribe:
 
 ```bash
-mosquitto_sub -h BROKER \
-    -t 'sanlightmesh/v1/sanlight-pi/#' \
+mosquitto_sub -V mqttv5 \
+    -h "$BROKER" \
+    -q 1 \
+    -t "$ROOT/#" \
     -v
 ```
 
-Generate a fresh command timestamp:
+Publish a read-only refresh:
 
 ```bash
 NOW="$(date --utc +%Y-%m-%dT%H:%M:%SZ)"
-```
+ID="manual-refresh-$(date +%s)"
+PAYLOAD="$(printf \
+    '{"id":"%s","action":"refresh","target":"%s","createdAt":"%s","ttlSeconds":30}' \
+    "$ID" "$NODE" "$NOW")"
 
-Read one node:
-
-```bash
-mosquitto_pub -h BROKER -q 1 \
-    -t 'sanlightmesh/v1/sanlight-pi/command' \
-    -m "{\"id\":\"manual-refresh-$(date +%s)\",\"action\":\"refresh\",\"target\":\"0003\",\"createdAt\":\"$NOW\",\"ttlSeconds\":30}"
-```
-
-Set one node to 48%, with verified readback:
-
-```bash
-mosquitto_pub -h BROKER -q 1 \
-    -t 'sanlightmesh/v1/sanlight-pi/command' \
-    -m "{\"id\":\"manual-set-$(date +%s)\",\"action\":\"set-max\",\"target\":\"0003\",\"value\":48,\"createdAt\":\"$NOW\",\"ttlSeconds\":30}"
+mosquitto_pub -V mqttv5 \
+    -h "$BROKER" \
+    -q 1 \
+    -t "$ROOT/command" \
+    -m "$PAYLOAD"
 ```
 
 Do not use `-r`/`--retain` for commands. The gateway rejects retained commands even when the broker delivers one.
+
+For the complete contract, see [MQTT_API.md](MQTT_API.md). For ioBroker, see [IOBROKER_INTEGRATION.md](IOBROKER_INTEGRATION.md). The completed validation matrix is recorded in [MQTT_TEST_PLAN.md](MQTT_TEST_PLAN.md).

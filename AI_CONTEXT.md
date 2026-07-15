@@ -2,7 +2,7 @@
 
 ## Project objective
 
-This repository controls SANlight EVO Bluetooth Mesh dimmers from a Raspberry Pi through BlueZ. The immediate objective is a small, robust and auditable command-line project—not an always-on automation service.
+This repository controls SANlight EVO Bluetooth Mesh dimmers from a Raspberry Pi through BlueZ. It now contains both a hardened command-line control path and an optional always-on MQTT edge gateway. The CLI remains the authoritative Mesh transaction engine; the gateway adds serialized, versioned and auditable LAN integration without exposing Mesh secrets.
 
 The current validated host path is:
 
@@ -25,6 +25,7 @@ Never print, commit, publish or paste:
 - BlueZ `JoinComplete`/attach token values
 - the contents of `.state/*.json`
 - the BlueZ Mesh database
+- MQTT password files and broker credentials
 
 Safe diagnostic output may contain mesh UUID, provisioner UUID/name, App-ID, unicast addresses, group names, node names, opcodes and access PDUs. Access PDUs built by the CLI do not contain NetKey/AppKey/DeviceKey.
 
@@ -61,7 +62,8 @@ State writes must remain atomic. `.state/` is mode `0700`; JSON state files are 
 ## Repository architecture
 
 ```text
-sanlight_canonical_sender_poc.py  stable compatibility entry point
+sanlight_canonical_sender_poc.py  stable CLI compatibility entry point
+sanlight_mqtt_gateway.py          stable MQTT service entry point
 sanlight_protocol.py              compatibility re-exports
 sanlight_mesh/
   cli.py                          argparse, offline preflight and redacted output
@@ -72,14 +74,29 @@ sanlight_mesh/
   state.py                        private atomic token-state storage
   locking.py                      exclusive single-process runtime guard
   bluez_runtime.py                D-Bus applications, elements and workflows
+  gateway_config.py               strict mode-0600 TOML configuration
+  gateway_protocol.py             MQTT v1 validation and result envelopes
+  gateway_queue.py                bounded serialization and setpoint coalescing
+  gateway_store.py                atomic dedup, in-flight and verified-state data
+  gateway_executor.py             fixed-argv, no-shell bridge to the CLI engine
+  mqtt_transport.py               MQTT 5, Last Will and retained state publishing
+  gateway_service.py              orchestration, expiry and state publication
 scripts/
   setup-all.sh                    ordered first-time setup
-  install-service.sh              service installation and readiness check
+  install-service.sh              BlueZ service installation and readiness check
+  install-mqtt-gateway.sh         MQTT gateway service installation
   start-meshd-generic.sh          generic:hci0 launcher
   sanlight-env-check.sh           validated-platform checks
   run-tests.sh                    offline tests and static token-output scan
 systemd/
   sanlight-meshd-generic.service.example
+  sanlight-mqtt-gateway.service.example
+docs/
+  MQTT_GATEWAY.md                 gateway installation and operation
+  MQTT_API.md                     versioned broker contract
+  MQTT_TEST_PLAN.md               validation record and regression plan
+  IOBROKER_INTEGRATION.md         generic adapter and future native adapter
+schemas/                          MQTT v1 JSON schemas
 tests/                            standard-library unittest suite; fake keys only
 ```
 
@@ -193,7 +210,9 @@ The archive must not contain:
 - `__pycache__`
 - real keys or token values
 
-Hardware claims require a Raspberry Pi test. Container/unit tests can validate syntax, CLI behavior, CDB parsing, bytes and filesystem safety, but cannot prove D-Bus timing, HCI ownership or RF reception.
+Hardware claims require a Raspberry Pi test. Container/unit tests can validate syntax, CLI behavior, CDB parsing, bytes, MQTT payload policy and filesystem safety, but cannot prove D-Bus timing, HCI ownership, RF reception, broker reconnection or systemd recovery.
+
+The merged MQTT implementation completed 97 offline tests on the target Linux host during the 2026-07-15 hardware run. Treat the current test suite, not the historical count, as authoritative.
 
 ## Sequence continuity and replay recovery
 
@@ -267,21 +286,23 @@ Project control policy:
 - the lamp-side profile remains responsible for smooth daily changes. Pi-side MaxBrightness is a coarse, infrequent limit.
 
 
-## Next sensible milestones
+## Remaining sensible milestones
 
-After the clean-image installation is validated:
+The clean-image CLI path and the MQTT gateway are both hardware validated. Remaining milestones should preserve the current safety boundaries:
 
-1. add a machine-readable `get-live --json` result without changing default output;
-2. add an optional long-running service only after command-line reliability is established;
-3. add time-drift monitoring as read-only behavior before any opt-in automatic synchronization;
-4. integrate ioBroker/MQTT in a separate adapter layer, not inside protocol/CDB modules.
+1. add machine-readable CLI output only where it provides value beyond MQTT v1, without changing default human output;
+2. add read-only time-drift monitoring before any opt-in automatic clock synchronization;
+3. add optional TLS deployment guidance and broader broker interoperability tests;
+4. create a native ioBroker adapter in a separate repository only when typed objects and UX justify it;
+5. investigate coordinated Bluetooth Mesh IV Update separately; never approximate it by manually incrementing IV Index.
 
 Automatic clock or brightness changes must remain explicit opt-in runtime behavior and must never become part of installation.
 
+## MQTT gateway merged implementation
 
-## MQTT gateway feature branch
+The gateway was developed on `feature/mqtt-gateway`, hardware validated, merged into `main`, and the temporary branch was deleted. Installed systems must track `main`; documentation must not instruct users to recreate the historical feature branch.
 
-Planned branch: `feature/mqtt-gateway`. The MQTT API is versioned independently under topic root `sanlightmesh/v1/<gateway-id>`.
+The MQTT API is versioned independently under topic root `sanlightmesh/v1/<gateway-id>`.
 
 Implemented gateway boundary:
 
@@ -289,13 +310,50 @@ Implemented gateway boundary:
 - `gateway_config.py`: strict mode-0600 TOML config;
 - `gateway_protocol.py`: command validation, TTL and result envelope;
 - `gateway_queue.py`: bounded serialization and same-node setpoint coalescing;
-- `gateway_store.py`: atomic non-secret dedup and verified-state cache;
+- `gateway_store.py`: atomic non-secret dedup, in-flight marker and verified-state cache;
 - `gateway_executor.py`: typed, no-shell bridge to the validated CLI engine;
-- `mqtt_transport.py`: Paho connection, Last Will and retained state publishing;
+- `mqtt_transport.py`: Paho MQTT 5 connection, Last Will and retained state publishing;
 - `gateway_service.py`: orchestration, no-op suppression, expiry and state publishing.
 
-The MQTT service must never receive or publish CDB keys, DeviceKeys, BlueZ tokens, local file paths from clients, or arbitrary CLI options. The gateway requires MQTT 5. It subscribes with `retainAsPublished=true` so live retained publications remain detectable, and `retainHandling=DO_NOT_SEND` so retained commands stored while offline are not delivered on reconnect. Retained commands are rejected before payload decoding. Only verified values update retained node state.
+The MQTT service must never receive or publish CDB keys, DeviceKeys, BlueZ tokens, MQTT passwords, local file paths from clients, or arbitrary CLI options. It subscribes with `retainAsPublished=true` so live retained publications remain detectable, and `retainHandling=DO_NOT_SEND` so retained commands stored while offline are not delivered on reconnect. Retained commands are rejected before payload decoding. Only verified values update retained node state.
 
-The first implementation intentionally keeps `bluetooth-meshd` persistent while using isolated CLI child transactions. This avoids unvalidated long-lived D-Bus object reuse and preserves the existing runtime lock/retry/readback behavior. A later in-process executor may replace this without changing MQTT API v1.
+The implementation intentionally keeps `bluetooth-meshd` persistent while using isolated CLI child transactions. This preserves the existing runtime lock, retry, readback and replay-protection behavior. A later in-process executor may replace this without changing MQTT API v1.
 
-A native ioBroker adapter is a separate future repository (`Nibbels/ioBroker.sanlightmesh`) and must depend only on MQTT API v1. Do not create it inside this Python repository or duplicate BlueZ logic there.
+A real retained-command ambiguity was found with MQTT 3.1.1: a broker may forward a live retained publication without preserving the retain flag visible to the subscriber. The required merged fix is MQTT 5 with `retainAsPublished=true` plus `retainHandling=DO_NOT_SEND`; do not weaken this back to MQTT 3.1.1 merely because ordinary commands appear to work.
+
+The gateway tests and state-permission checks are Linux/POSIX-specific. Running the full suite directly on native Windows can fail on unavailable `fcntl`, path escaping, permission bits and filesystem-sync semantics. Those failures do not replace the authoritative Linux target-host test.
+
+The systemd unit sets `PYTHONUNBUFFERED=1`; target-host validation confirmed immediate MQTT connection and command-completion messages in the journal. Before this setting was added, older buffered messages appeared together only when the process stopped.
+
+### Completed hardware validation, 2026-07-15
+
+Validated on the real two-node SANlight installation with Mosquitto 2.0.11, separate ACL-limited gateway/ioBroker users, MQTT API v1 and gateway service version `0.1.1`:
+
+- gateway startup published retained availability, gateway info, node metadata and verified node state;
+- read-only refresh and verified `set-max`/restore worked end to end;
+- ordinary `set-max 0` was rejected;
+- live retained commands were rejected and offline retained commands were not delivered after reconnect;
+- duplicate IDs returned stored results without another Mesh transaction, including after gateway restart;
+- expired commands and a rate-guard-blocked command reported `meshMessagesSent: 0`;
+- rapid same-node setpoints were coalesced and older requests became `superseded`;
+- explicit blackout produced verified 0%, physical light off, and `restore-blackout latest` restored the prior value;
+- SIGKILL Last Will, automatic service restart, Mosquitto restart and full lamp-side Raspberry Pi reboot recovered correctly;
+- generic ioBroker MQTT adapter subscription received availability, gateway info and verified node JSON strings;
+- ioBroker JavaScript publication successfully performed refresh, set and restore;
+- both lamps were restored to the installation's original 68% MaxBrightness after testing;
+- sender sequence status remained `ok` with 93.75% of the 24-bit space remaining at the end of the documented run.
+
+The addresses, node names, local IP addresses and 68% value belong to that installation and are not generic defaults.
+
+### Broker deployment findings
+
+- The validated broker was Mosquitto 2.0.11 with anonymous access disabled and separate ACL-limited users for the gateway and ioBroker.
+- Mosquitto parses its main configuration and included fragments as one configuration. Defining `persistence_location` in more than one loaded file caused startup failure; keep global persistence settings in exactly one place.
+- Binding a listener to a specific interface address reduces exposure but couples broker startup to that address and interface. Use a stable address/reservation and account for interface availability.
+- The documented run used plain MQTT on a trusted LAN. The gateway supports TLS configuration, but TLS certificate deployment and interoperability were not part of that hardware validation.
+
+### ioBroker boundary
+
+The validated generic ioBroker integration creates objects below `mqtt.0.sanlightmesh.v1.<gateway-id>`. JSON payloads are stored as strings, and one object remains for each observed result topic. This is expected generic-adapter behavior, not a gateway defect. The tested adapter configuration disabled automatic own-state publication, publish-on-connect, retained publication and persistent sessions; commands were sent explicitly with `sendMessage2Client`.
+
+A native ioBroker adapter remains a separate future repository (`Nibbels/ioBroker.sanlightmesh`) and must depend only on MQTT API v1. Do not create it inside this Python repository or duplicate BlueZ logic there.

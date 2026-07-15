@@ -87,14 +87,14 @@ sudo python3 sanlight_canonical_sender_poc.py \
     list-nodes
 ```
 
-The first column of the lamp table is named `NODE_ADDRESS`. It is the four-digit unicast address used by commands such as `get-live`, for example `0002` or `0003`. Group addresses such as `C000` are listed separately and cannot be used by read-only node commands.
+The first column of the lamp table is named `NODE_ADDRESS`. It is the four-digit unicast address used by commands such as `get-live`. Addresses are installation-specific. Group addresses are listed separately and cannot be used by read-only node commands.
 
 Read lamp time and the still-partially-understood brightness-related raw field from one unicast lamp node:
 
 ```bash
 sudo python3 sanlight_canonical_sender_poc.py \
     --cdb private/SANlightMesh.json \
-    get-live <NODE_ADDRESS>
+    get-live NODE_ADDRESS
 ```
 
 Read the configured MaxBrightness percentage from one unicast lamp node:
@@ -102,7 +102,7 @@ Read the configured MaxBrightness percentage from one unicast lamp node:
 ```bash
 sudo python3 sanlight_canonical_sender_poc.py \
     --cdb private/SANlightMesh.json \
-    get-max <NODE_ADDRESS>
+    get-max NODE_ADDRESS
 ```
 
 `get-max` sends SANlight GetMaxBrightness (`C8 8B 0A`) and requires a matching
@@ -119,7 +119,7 @@ Read the Bluetooth Mesh Config Network Transmit setting from one unicast node:
 ```bash
 sudo python3 sanlight_canonical_sender_poc.py \
     --cdb private/SANlightMesh.json \
-    get-net-tx <NODE_ADDRESS>
+    get-net-tx NODE_ADDRESS
 ```
 
 Show the canonical sender's live non-secret BlueZ state after attaching it:
@@ -181,7 +181,7 @@ Set MaxBrightness for one CDB node or group:
 ```bash
 sudo python3 sanlight_canonical_sender_poc.py \
     --cdb private/SANlightMesh.json \
-    set-max <NODE_OR_GROUP_ADDRESS> 68
+    set-max DESTINATION_ADDRESS 68
 ```
 
 For a unicast node, `set-max` uses two independent response layers:
@@ -198,7 +198,7 @@ For a unicast node, `set-max` uses two independent response layers:
 Successful unicast output ends with:
 
 ```text
-SET-MAX VERIFIED. Node 0x0003 reports MaxBrightness 48% as requested.
+SET-MAX VERIFIED. Node 0x1234 reports MaxBrightness 48% as requested.
 ```
 
 The final exit status is:
@@ -227,7 +227,7 @@ a separate, strongly confirmed command:
 ```bash
 sudo python3 sanlight_canonical_sender_poc.py \
     --cdb private/SANlightMesh.json \
-    blackout 0003 --confirm-blackout
+    blackout NODE_ADDRESS --confirm-blackout
 ```
 
 Black out every detected SANlight lamp node individually:
@@ -279,10 +279,10 @@ already restored. Repeating `restore-blackout latest` therefore unwinds multiple
 blackout operations in reverse order. An exact snapshot path can still be
 reapplied deliberately; the CLI prints that it was previously completed.
 
-This matters when blackouts overlap. Example: black out node `0003`, then run
+This matters when blackouts overlap. Example: black out one node, then run
 `blackout all`. The second snapshot contains only the other nodes that changed.
 Restoring `latest` first undoes the second operation; running it again restores
-node `0003` from the earlier snapshot. Remove old snapshot files manually only
+that node from the earlier snapshot. Remove old snapshot files manually only
 after the lamps have been independently checked.
 
 Compatibility note: snapshots created by the older blackout implementation may
@@ -300,7 +300,7 @@ Set one lamp clock to an explicit local clock value:
 ```bash
 sudo python3 sanlight_canonical_sender_poc.py \
     --cdb private/SANlightMesh.json \
-    set-time <NODE_ADDRESS> 10:38:30
+    set-time NODE_ADDRESS 10:38:30
 ```
 
 Set all detected SANlight lamp nodes to an explicit clock value:
@@ -324,7 +324,7 @@ Synchronize one node with an optional timing offset:
 ```bash
 sudo python3 sanlight_canonical_sender_poc.py \
     --cdb private/SANlightMesh.json \
-    sync-now <NODE_ADDRESS> --offset-ms 250
+    sync-now NODE_ADDRESS --offset-ms 250
 ```
 
 The Raspberry Pi timezone must be correct before `sync-now`:
@@ -370,21 +370,30 @@ The service launcher discovers `rfkill` through `PATH`; it does not assume the i
 
 ## Updating the project
 
-Before updating, make sure the CDB and state files remain ignored:
+Use the merged `main` branch for installed systems:
 
 ```bash
-git status --short
+git switch main
+git fetch --prune origin
 git pull --ff-only
+git status --short
 ./scripts/run-tests.sh
 ```
 
-Reinstall the service definition after changes to `scripts/` or `systemd/`:
+Reinstall the BlueZ service definition after relevant changes to `scripts/` or `systemd/`:
 
 ```bash
 sudo ./scripts/install-service.sh
 ```
 
-This does not reset Mesh state unless `--reset-mesh-state` is explicitly supplied.
+When the MQTT gateway is installed, also reinstall its unit after gateway, installer or systemd changes:
+
+```bash
+sudo bash ./scripts/install-mqtt-gateway.sh \
+    --config private/sanlight-gateway.toml
+```
+
+Neither installer resets Mesh state unless a reset option is explicitly supplied.
 
 ## Removing only the canonical sender
 
@@ -438,7 +447,7 @@ A state file belongs to a different CDB identity, App-ID or unicast address. Do 
 
 ```bash
 sudo bash ./scripts/setup-all.sh \
-    --iv-index <VERIFIED_IV_INDEX> \
+    --iv-index VERIFIED_IV_INDEX \
     --reset-mesh-state
 ```
 
@@ -447,7 +456,7 @@ sudo bash ./scripts/setup-all.sh \
 Obtain the current IV Index from the known working Mesh context. Do not guess. Pass it explicitly:
 
 ```bash
-sudo bash ./scripts/setup-all.sh --iv-index <VERIFIED_IV_INDEX>
+sudo bash ./scripts/setup-all.sh --iv-index VERIFIED_IV_INDEX
 ```
 
 ### Replay protection after a fresh SD card
@@ -470,7 +479,7 @@ cycles. Losing the SANlight lamp clock after power loss is unrelated.
 Run the combined read-only diagnosis with one detected lamp node:
 
 ```bash
-sudo bash ./scripts/diagnose-replay.sh 0002
+sudo bash ./scripts/diagnose-replay.sh NODE_ADDRESS
 ```
 
 The script probes both identities and gives each path up to two attempts. It also
@@ -541,11 +550,11 @@ private Mesh material. Do not display, copy into a chat, commit, or publish it.
 After recovery, verify with:
 
 ```bash
-sudo bash ./scripts/diagnose-replay.sh 0002
+sudo bash ./scripts/diagnose-replay.sh NODE_ADDRESS
 
 sudo python3 sanlight_canonical_sender_poc.py \
     --cdb private/SANlightMesh.json \
-    get-live 0002
+    get-live NODE_ADDRESS
 ```
 
 #### Destructive reset to a fresh sequence space
@@ -582,9 +591,9 @@ starting. A normal lamp power cycle is not a factory reset.
 
 Authoritative references:
 
-- [Bluetooth Mesh Protocol specification](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/MshPRT_v1.1/out/en/index-en.html)
+- [Bluetooth Mesh Protocol specification](https://www.bluetooth.com/specifications/specs/mesh-protocol-1-1-1/)
 - [Bluetooth Mesh Security Overview](https://www.bluetooth.com/wp-content/uploads/2025/04/MeshSecurityOverview_INFO_v1.0-1.pdf)
-- [BlueZ Mesh D-Bus API](https://github.com/bluez/bluez/blob/master/doc/mesh-api.txt)
+- [BlueZ Mesh D-Bus API](https://bluez.readthedocs.io/en/latest/mesh-api/)
 - [SANlight Bluetooth Dimmer operating instructions](https://www.sanlight.com/wp-content/uploads/2023/03/sanlight-bt-dimmer-manual-2023-en.pdf)
 
 ### A command transmits but no status is received
@@ -607,33 +616,30 @@ Run all tests without Mesh hardware:
 ./scripts/run-tests.sh
 ```
 
-The suite checks protocol bytes, brightness safety, CDB consistency, destination restrictions, state permissions and atomic writes, redacted output, CLI prevalidation, replay-diagnostic safety, 24-bit sequence bounds, forward-only recovery, protected backups and token-output patterns.
+The suite checks protocol bytes, brightness safety, CDB consistency, destination restrictions, state permissions and atomic writes, redacted output, CLI prevalidation, replay-diagnostic safety, 24-bit sequence bounds, forward-only recovery, protected backups, MQTT protocol validation, queue behavior, deduplication, retained-command policy and token-output patterns.
 
+During the completed MQTT hardware validation on 2026-07-15, 97 tests passed on the target Linux host. The exact count may increase as regression coverage grows; passing the current suite is authoritative.
 
 ## Optional MQTT edge gateway
 
-For an ioBroker host outside Bluetooth range, keep this Raspberry Pi near the lamps and run the optional MQTT service. The Pi remains the only host containing the private CDB and BlueZ state.
+For an ioBroker host outside Bluetooth range, keep this Raspberry Pi near the lamps and run the merged MQTT service from `main`. The lamp-side Pi remains the only host containing the private CDB and BlueZ state.
 
-Start development on a feature branch:
+Configuration, installation and operation are documented in [docs/MQTT_GATEWAY.md](docs/MQTT_GATEWAY.md). The versioned broker contract is in [docs/MQTT_API.md](docs/MQTT_API.md), the completed hardware validation is in [docs/MQTT_TEST_PLAN.md](docs/MQTT_TEST_PLAN.md), and the validated generic ioBroker path is in [docs/IOBROKER_INTEGRATION.md](docs/IOBROKER_INTEGRATION.md).
 
-```bash
-git switch -c feature/mqtt-gateway
-git push -u origin feature/mqtt-gateway
-```
+The gateway keeps one MQTT connection and one serialized command queue. `bluetooth-meshd` remains persistent. Each queued command invokes the hardware-validated CLI transaction engine through a fixed argument vector; it never invokes a shell and MQTT cannot supply executable paths or arbitrary options.
 
-Configuration and service installation are documented in [docs/MQTT_GATEWAY.md](docs/MQTT_GATEWAY.md). The versioned broker contract is in [docs/MQTT_API.md](docs/MQTT_API.md), and the native adapter plan is in [docs/IOBROKER_INTEGRATION.md](docs/IOBROKER_INTEGRATION.md).
-
-The gateway keeps one MQTT connection and one serialized command queue. `bluetooth-meshd` remains persistent. The first release invokes the hardware-validated CLI transaction engine through a fixed argument vector for each queued command; it never invokes a shell and MQTT cannot supply executable paths or arbitrary options.
+The gateway implementation has been hardware validated for read-only refresh, verified set/restore, duplicate delivery, command expiry, retained-message rejection, offline retained-command suppression, coalescing, blackout/restore, persistent rate limiting, broker restart, gateway restart, full Raspberry Pi reboot and generic ioBroker operation.
 
 Important automation rules:
 
 - command topics are never retained;
-- QoS 1 duplicates are deduplicated by command ID;
+- QoS 1 duplicates are deduplicated by command ID, including after gateway restart;
 - every command has a creation time and short TTL;
 - rapid pending `set-max` updates for one node are coalesced;
 - cache-only no-op suppression is disabled by default because the SANlight app may also write;
 - writes remain subject to the persistent ten-second guard;
 - routine automation should normally update no faster than once per minute;
-- periodic refresh defaults to 30 minutes and can be disabled.
+- periodic refresh defaults to 30 minutes and can be disabled;
+- gateway logs are unbuffered under systemd and should appear immediately.
 
 Do not map a per-second sensor loop or an un-debounced UI slider directly to Mesh commands. Read-only polling also consumes Sequence Numbers.
