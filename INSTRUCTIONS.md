@@ -334,6 +334,37 @@ timedatectl
 sudo raspi-config
 ```
 
+## End-to-end installer and BlueZ identity-state adoption
+
+The normal installation and upgrade command is:
+
+    sudo bash scripts/install-gateway.sh
+
+It installs both persistent services, all Mesh/MQTT dependencies and the protected MQTT configuration. `setup-all.sh`, `install-service.sh` and `install-mqtt-gateway.sh` are lower-level helpers rather than separate user-facing installation phases.
+
+Before any `Network1.Import`, the installer stops the gateway and Mesh services and classifies each CDB identity independently:
+
+| Protected project state | Exact CDB-derived BlueZ `node.json` | Action |
+|---|---|---|
+| present | present | validate identity, token and IV Index, then attach |
+| missing | present | validate BlueZ state and reconstruct the project state atomically |
+| missing | missing | permit a fresh import |
+| present | missing | abort; automatic re-import is blocked |
+| mismatch | mismatch | abort without printing private values |
+| only `node.json.bak` | missing | abort for manual recovery |
+
+The BlueZ path is derived strictly from the expected provisioner UUID. Recovery also requires the DeviceKey and unicast address to match the private CDB and all available IV Index sources to agree. The control and sender `node.json` structures may differ; the presence of `appKeys` is deliberately ignored and must never be used to select an identity.
+
+Recovery reconstructs only `.state/control-provisioner.json` or `.state/canonical-sender.json` using the normal atomic mode-`0600` writer. It never changes `sequenceNumber`, copies AppKeys, or edits another BlueZ field.
+
+For an update, keep all private state and credentials:
+
+    git pull --ff-only
+    ./scripts/run-tests.sh
+    sudo bash scripts/install-gateway.sh --reuse-existing
+
+`--reset-mesh-state` is intentionally destructive. It is never implied by install or upgrade and must not be used to solve a missing `.state/` directory when the corresponding BlueZ databases still exist.
+
 ## Service operation
 
 Status:
@@ -370,30 +401,16 @@ The service launcher discovers `rfkill` through `PATH`; it does not assume the i
 
 ## Updating the project
 
-Use the merged `main` branch for installed systems:
+Use the merged `main` branch for installed systems and rerun the single product installer:
 
-```bash
-git switch main
-git fetch --prune origin
-git pull --ff-only
-git status --short
-./scripts/run-tests.sh
-```
+    git switch main
+    git fetch --prune origin
+    git pull --ff-only
+    git status --short
+    ./scripts/run-tests.sh
+    sudo bash scripts/install-gateway.sh --reuse-existing
 
-Reinstall the BlueZ service definition after relevant changes to `scripts/` or `systemd/`:
-
-```bash
-sudo ./scripts/install-service.sh
-```
-
-When the MQTT gateway is installed, also reinstall its unit after gateway, installer or systemd changes:
-
-```bash
-sudo bash ./scripts/install-mqtt-gateway.sh \
-    --config private/sanlight-gateway.toml
-```
-
-Neither installer resets Mesh state unless a reset option is explicitly supplied.
+This refreshes both systemd units and updates the configured `project_root` while retaining the private CDB, BlueZ databases, protected project state and MQTT credentials. Installation never resets Mesh state unless `--reset-mesh-state` is explicitly supplied.
 
 ## Removing only the canonical sender
 
@@ -456,7 +473,7 @@ sudo bash ./scripts/setup-all.sh \
 Obtain the current IV Index from the known working Mesh context. Do not guess. Pass it explicitly:
 
 ```bash
-sudo bash ./scripts/setup-all.sh --iv-index VERIFIED_IV_INDEX
+sudo bash ./scripts/install-gateway.sh --iv-index VERIFIED_IV_INDEX
 ```
 
 ### Replay protection after a fresh SD card
@@ -620,9 +637,9 @@ The suite checks protocol bytes, brightness safety, CDB consistency, destination
 
 During the completed MQTT hardware validation on 2026-07-15, 97 tests passed on the target Linux host. The exact count may increase as regression coverage grows; passing the current suite is authoritative.
 
-## Optional MQTT edge gateway
+## MQTT gateway operation
 
-For an ioBroker host outside Bluetooth range, keep this Raspberry Pi near the lamps and run the merged MQTT service from `main`. The lamp-side Pi remains the only host containing the private CDB and BlueZ state.
+The MQTT service is the normal product runtime. Keep this Raspberry Pi near the lamps when the ioBroker host is outside reliable Bluetooth range and run the merged service from `main`. The lamp-side Pi remains the only host containing the private CDB and BlueZ state.
 
 Configuration, installation and operation are documented in [docs/MQTT_GATEWAY.md](docs/MQTT_GATEWAY.md). The versioned broker contract is in [docs/MQTT_API.md](docs/MQTT_API.md), the completed hardware validation is in [docs/MQTT_TEST_PLAN.md](docs/MQTT_TEST_PLAN.md), and the validated generic ioBroker path is in [docs/IOBROKER_INTEGRATION.md](docs/IOBROKER_INTEGRATION.md).
 

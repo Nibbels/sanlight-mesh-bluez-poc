@@ -1,68 +1,62 @@
-# Interactive gateway installer
+# Installer design
 
-## Scope
+`scripts/install-gateway.sh` is the single public installation and upgrade entry point. `scripts/setup-all.sh`, `scripts/install-service.sh` and `scripts/install-mqtt-gateway.sh` remain lower-level helpers for development and recovery.
 
-`scripts/install-gateway.sh` is a low-maintenance deployment helper for an already prepared lamp-side Raspberry Pi.
+## Responsibilities
 
-It does not provision a new SANlight Mesh and it does not replace `SETUP.md`. Before running it, the following must already exist:
+The public installer:
 
-- a validated private SANlight CDB;
-- control and canonical-sender BlueZ identity state;
-- a working `sanlight-meshd-generic.service`;
-- a reachable MQTT broker and credentials with suitable ACLs.
+1. validates the private CDB without printing secrets;
+2. installs Mesh and MQTT dependencies in one package phase;
+3. runs offline syntax, unit and source-security checks;
+4. validates the Raspberry Pi / BlueZ environment;
+5. stops the project gateway and Mesh services;
+6. classifies both local identities against project and BlueZ state;
+7. safely reconstructs missing project token state or permits a fresh import;
+8. installs and validates the persistent Mesh service;
+9. attaches/imports the two identities and applies local model setup;
+10. creates or reuses protected MQTT configuration;
+11. installs the MQTT service and runs read-only diagnostics.
 
-The installer never sends brightness or clock writes. The service may perform its configured read-only startup refresh.
+Installation never calls a lamp brightness or clock write command.
 
-## What it does
+## Identity-state matrix
 
-- asks for gateway ID, CDB, state directory and MQTT settings;
-- reads the MQTT password without echoing it;
-- writes configuration below `/etc/sanlight-mesh-mqtt-gateway/` with mode `0600`;
-- validates the configuration before changing systemd state;
-- delegates service installation to the existing validated `install-mqtt-gateway.sh`;
-- installs `/usr/local/sbin/sanlight-gateway` as an operational helper;
-- runs a read-only doctor report after installation.
+Each identity is handled independently:
 
-The application continues to run from the checked-out release directory. This deliberately avoids a Debian package and keeps updates understandable for a small community project.
+| Project state | Exact CDB-derived BlueZ `node.json` | Result |
+|---|---|---|
+| present | present | validate identity, token and IV Index; attach |
+| missing | present | validate BlueZ identity; atomically reconstruct project state; attach |
+| missing | missing | permit fresh `Network1.Import` |
+| present | missing | abort; automatic re-import is blocked |
+| any mismatch | any mismatch | abort without printing private values |
+| `node.json.bak` only | missing | abort for manual recovery |
 
-The installer does not install or reconfigure an MQTT broker and does not create broker users. Broker placement is independent of the gateway, so users must prepare a reachable broker account and least-privilege ACL first. The wizard stores those existing credentials safely and validates the gateway configuration.
+The BlueZ database path is `/var/lib/bluetooth/mesh/<provisioner-uuid-without-hyphens>/node.json`. The installer never scans for whichever identity happens to contain `appKeys`; optional field sets may legitimately differ between the control and canonical-sender databases.
 
-## Run
+## Validation before adoption
 
-From the repository root:
+Recovery requires all of the following:
+
+- exact provisioner UUID-derived path;
+- regular, non-symlink, root-owned private `node.json`;
+- DeviceKey equality with the private CDB;
+- exact CDB unicast address;
+- valid 64-bit token representation;
+- valid 32-bit IV Index;
+- agreement with any existing project/CDB/explicit IV Index source.
+
+Only the normal protected token-state JSON is reconstructed. `sequenceNumber`, NetKey/AppKey data and all other BlueZ fields remain untouched.
+
+## Upgrade mode
 
 ```bash
-sudo bash scripts/install-gateway.sh
+sudo bash scripts/install-gateway.sh --reuse-existing
 ```
 
-Optional non-interactive paths for automation:
+This keeps the CDB path, state directory, broker credentials and gateway settings, updates `project_root` to the current checkout, refreshes both systemd units and runs diagnostics.
 
-```bash
-sudo bash scripts/install-gateway.sh \
-    --config /etc/sanlight-mesh-mqtt-gateway/gateway.toml \
-    --reuse-existing
-```
+## Destructive reset
 
-`--reuse-existing` validates and reinstalls an existing config without asking for secrets again.
-
-## Idempotency
-
-Rerunning the installer:
-
-- preserves the existing config unless the operator chooses to replace it;
-- creates timestamped backups before overwriting configuration;
-- updates `gateway.project_root` and the systemd unit to the current release directory;
-- does not reset BlueZ state;
-- does not change sequence numbers;
-- does not issue lamp write commands.
-
-## Remaining validation
-
-The underlying MQTT gateway is hardware-validated. The new interactive wrapper must still be tested on:
-
-1. a clean supported Raspberry Pi OS image;
-2. an upgrade over the current in-repository installation;
-3. a broker with TLS;
-4. failure paths such as bad password, missing CDB and unavailable broker.
-
-Do not describe the wrapper as generally validated until these tests are complete.
+`--reset-mesh-state` deliberately removes local BlueZ and project token state after validation. It is not an update mechanism and does not reset lamps. Reusing the same sender address after deleting sequence state can trigger Bluetooth Mesh replay protection; review the recovery section in `INSTRUCTIONS.md` first.

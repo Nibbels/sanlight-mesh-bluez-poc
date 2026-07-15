@@ -162,18 +162,40 @@ The binding callback is gated by remote DeviceKey readiness so that an asynchron
 
 ## Setup transaction ordering
 
-`setup-all.sh` must preserve this order:
+`scripts/install-gateway.sh` is the single public installer. It must preserve this order:
 
-1. locate and chmod the private CDB;
-2. run `inspect` and require IV Index information;
-3. run compile and unit tests;
-4. install packages;
-5. validate environment;
-6. install/start service and wait for `org.bluez.mesh` with a hard timeout;
-7. execute local identity setup;
-8. show read-only verification only.
+  1. locate and protect the private CDB and configuration directory;
+  2. validate the CDB without printing secrets;
+  3. install all BlueZ, Python and Paho MQTT packages in one package phase;
+  4. run compile, unit and source-security tests;
+  5. validate the Raspberry Pi / BlueZ environment;
+  6. stop the MQTT gateway and `sanlight-meshd-generic.service`;
+  7. reconcile both identities against exact CDB-derived BlueZ UUID paths;
+  8. install/start the Mesh service and attach or import identities;
+  9. create or reuse protected MQTT configuration;
+  10. install/start the MQTT service and run read-only diagnostics.
 
-`--reset-mesh-state` is explicit and occurs only after CDB preflight and tests. Never reintroduce an unconditional reset.
+`setup-all.sh` remains the lower-level Mesh helper used by the public installer. `--reset-mesh-state` stays explicit and occurs only after CDB preflight and tests. Never reintroduce an unconditional reset or a separate normal "Mesh first, MQTT optional" installation path.
+
+## Identity-state adoption invariants
+
+The validated BlueZ 5.82 host stores one `/var/lib/bluetooth/mesh/<provisioner-uuid>/node.json` per imported local identity. The top-level object includes `token`, `IVindex`, `sequenceNumber`, `deviceKey` and `unicastAddress`; optional fields can differ between identities. In the observed installation the canonical sender contained `appKeys` while the control identity did not. That difference is not corruption.
+
+Identity recovery rules:
+
+  * derive the directory exclusively from the expected CDB provisioner UUID;
+  * require a private regular non-symlink file owned by root;
+  * validate DeviceKey and unicast address against the CDB without printing either key;
+  * validate the token as uint64 hexadecimal and IV Index as uint32;
+  * require explicit/CDB/project/BlueZ IV Index values to agree;
+  * reconstruct only the normal protected project token-state file through `write_state()`;
+  * never identify a node by `appKeys`, list shape, filesystem ordering or another heuristic;
+  * never alter `sequenceNumber` during state adoption;
+  * project state present plus BlueZ state absent is a hard error, not permission to re-import;
+  * `node.json.bak` without `node.json` is a manual-recovery condition;
+  * all errors must remain redacted.
+
+The normal state matrix is: both present = validate; project missing/BlueZ present = recover; both missing = fresh import; project present/BlueZ missing = abort. This classification is performed independently for control App-ID 1 and canonical sender App-ID 2.
 
 ## Service lessons
 
