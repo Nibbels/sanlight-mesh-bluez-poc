@@ -365,7 +365,7 @@ For an update, keep all private state and credentials:
     ./scripts/run-tests.sh
     sudo bash scripts/install-gateway.sh --reuse-existing
 
-`--reset-mesh-state` is intentionally destructive. It is never implied by install or upgrade and must not be used to solve a missing `.state/` directory when the corresponding BlueZ databases still exist.
+The lower-level `scripts/setup-all.sh` and `scripts/install-service.sh` helpers still support `--reset-mesh-state` for a deliberate complete local reinitialization. The option is intentionally destructive, is never implied by `scripts/install-gateway.sh`, and must not be used for routine updates or to recover a missing `.state/` directory while the corresponding BlueZ databases still exist.
 
 ## Service operation
 
@@ -412,7 +412,7 @@ Use the merged `main` branch for installed systems and rerun the single product 
     ./scripts/run-tests.sh
     sudo bash scripts/install-gateway.sh --reuse-existing
 
-This refreshes both systemd units and updates the configured `project_root` while retaining the private CDB, BlueZ databases, protected project state and MQTT credentials. Installation never resets Mesh state unless `--reset-mesh-state` is explicitly supplied.
+This refreshes both systemd units and updates the configured `project_root` while retaining the private CDB, BlueZ databases, protected project state and MQTT credentials. The normal `scripts/install-gateway.sh` installation and update path never resets Mesh state. A destructive reset occurs only when `--reset-mesh-state` is explicitly supplied to one of the lower-level Mesh setup helpers documented above.
 
 ## Removing only the canonical sender
 
