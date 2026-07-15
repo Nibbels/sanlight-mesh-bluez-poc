@@ -608,3 +608,32 @@ Run all tests without Mesh hardware:
 ```
 
 The suite checks protocol bytes, brightness safety, CDB consistency, destination restrictions, state permissions and atomic writes, redacted output, CLI prevalidation, replay-diagnostic safety, 24-bit sequence bounds, forward-only recovery, protected backups and token-output patterns.
+
+
+## Optional MQTT edge gateway
+
+For an ioBroker host outside Bluetooth range, keep this Raspberry Pi near the lamps and run the optional MQTT service. The Pi remains the only host containing the private CDB and BlueZ state.
+
+Start development on a feature branch:
+
+```bash
+git switch -c feature/mqtt-gateway
+git push -u origin feature/mqtt-gateway
+```
+
+Configuration and service installation are documented in [docs/MQTT_GATEWAY.md](docs/MQTT_GATEWAY.md). The versioned broker contract is in [docs/MQTT_API.md](docs/MQTT_API.md), and the native adapter plan is in [docs/IOBROKER_INTEGRATION.md](docs/IOBROKER_INTEGRATION.md).
+
+The gateway keeps one MQTT connection and one serialized command queue. `bluetooth-meshd` remains persistent. The first release invokes the hardware-validated CLI transaction engine through a fixed argument vector for each queued command; it never invokes a shell and MQTT cannot supply executable paths or arbitrary options.
+
+Important automation rules:
+
+- command topics are never retained;
+- QoS 1 duplicates are deduplicated by command ID;
+- every command has a creation time and short TTL;
+- rapid pending `set-max` updates for one node are coalesced;
+- cache-only no-op suppression is disabled by default because the SANlight app may also write;
+- writes remain subject to the persistent ten-second guard;
+- routine automation should normally update no faster than once per minute;
+- periodic refresh defaults to 30 minutes and can be disabled.
+
+Do not map a per-second sensor loop or an un-debounced UI slider directly to Mesh commands. Read-only polling also consumes Sequence Numbers.

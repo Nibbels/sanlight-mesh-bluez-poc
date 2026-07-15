@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Nibbels/sanlight-mesh-bluez-poc/schemas/gateway-info-v1.schema.json",
+  "title": "SANlight Mesh gateway info v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "protocolVersion",
+    "serviceVersion",
+    "gatewayId",
+    "meshUuid",
+    "senderAddress",
+    "nodes",
+    "writePolicy",
+    "timestamp"
+  ],
+  "properties": {
+    "protocolVersion": {
+      "const": 1
+    },
+    "serviceVersion": {
+      "type": "string"
+    },
+    "gatewayId": {
+      "type": "string"
+    },
+    "meshUuid": {
+      "type": "string"
+    },
+    "senderAddress": {
+      "type": "string",
+      "pattern": "^[0-9A-F]{4}$"
+    },
+    "nodes": {
+      "type": "array"
+    },
+    "writePolicy": {
+      "type": "object"
+    },
+    "sequenceNumber": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 16777215
+    },
+    "sequenceRemaining": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 16777215
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sequenceStatus": {
+      "enum": [
+        "ok",
+        "warning",
+        "critical"
+      ]
+    },
+    "sequenceRemainingPercent": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "sequenceWarning": {
+      "type": "string"
+    }
+  }
+}

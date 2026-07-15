@@ -14,6 +14,7 @@ root = Path.cwd()
 paths = [
     root / "sanlight_canonical_sender_poc.py",
     root / "sanlight_protocol.py",
+    root / "sanlight_mqtt_gateway.py",
 ]
 for directory in (root / "sanlight_mesh", root / "tests"):
     paths.extend(sorted(directory.rglob("*.py")))

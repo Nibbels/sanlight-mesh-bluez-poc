@@ -1,0 +1,29 @@
+[Unit]
+Description=SANlight Bluetooth Mesh MQTT edge gateway
+Documentation=https://github.com/Nibbels/sanlight-mesh-bluez-poc/blob/main/docs/MQTT_GATEWAY.md
+After=network-online.target sanlight-meshd-generic.service
+Wants=network-online.target
+Requires=sanlight-meshd-generic.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=@REPO_DIR@
+ExecStart=/usr/bin/python3 @REPO_DIR@/sanlight_mqtt_gateway.py --config @CONFIG_PATH@
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+UMask=0077
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadOnlyPaths=@REPO_DIR@ @CONFIG_PATH@
+ReadWritePaths=@STATE_DIR@
+
+[Install]
+WantedBy=multi-user.target

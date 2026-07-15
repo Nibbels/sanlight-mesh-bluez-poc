@@ -1,0 +1,34 @@
+# Copy this file to private/sanlight-gateway.toml and chmod it to 600.
+# Do not place MQTT passwords directly in this file. Use password_file.
+
+[gateway]
+id = "sanlight-pi"
+project_root = ".."
+cdb = "SANlightMesh.json"
+state_dir = "../.state"
+control_app_id = 1
+sender_app_id = 2
+command_timeout_seconds = 45
+queue_max_size = 32
+dedup_ttl_seconds = 86400
+dedup_max_entries = 512
+coalesce_window_seconds = 2.0
+# 0 disables cache-only write suppression. Enable only when the gateway is the sole writer.
+state_fresh_seconds = 0
+refresh_on_start = true
+# Set to 0 to disable periodic refresh. Polling consumes Mesh Sequence Numbers.
+refresh_interval_seconds = 1800
+
+[mqtt]
+host = "192.168.1.10"
+port = 1883
+topic_prefix = "sanlightmesh/v1"
+client_id = "sanlightmesh-sanlight-pi"
+keepalive_seconds = 60
+qos = 1
+
+# Recommended for a broker outside a fully trusted LAN:
+# username = "sanlight-gateway"
+# password_file = "mqtt-password.txt"
+# tls = true
+# ca_cert = "/etc/ssl/certs/ca-certificates.crt"
