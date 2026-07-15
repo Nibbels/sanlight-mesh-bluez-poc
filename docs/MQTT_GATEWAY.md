@@ -105,7 +105,7 @@ sudo systemctl status sanlight-mqtt-gateway.service
 sudo journalctl -fu sanlight-mqtt-gateway.service
 ```
 
-The installer adds Debian's `python3-paho-mqtt` package. It does not install a broker. Run Mosquitto or another MQTT broker on the ioBroker host or elsewhere on the trusted LAN.
+The installer adds Debian's `python3-paho-mqtt` package. The gateway requires Paho MQTT 2.x and MQTT 5 support because MQTT 3.1.1 cannot reliably preserve the publisher's retain flag for a live subscription. It does not install a broker. Run Mosquitto or another MQTT broker on the ioBroker host or elsewhere on the trusted LAN.
 
 ## Traffic and Sequence Number safety
 
@@ -114,7 +114,8 @@ Every outgoing Bluetooth Mesh message consumes one value from the sender's 24-bi
 The gateway therefore:
 
 - processes only one Mesh transaction at a time;
-- rejects retained MQTT commands;
+- uses MQTT 5 with `retainAsPublished=true` and rejects live retained MQTT commands;
+- uses `retainHandling=DO_NOT_SEND`, so commands retained while the gateway is offline are not delivered after reconnect;
 - uses a clean MQTT session so commands published while the gateway is offline are not queued for later execution;
 - requires command IDs and expiration data;
 - remembers completed IDs and does not execute QoS 1 duplicates again;

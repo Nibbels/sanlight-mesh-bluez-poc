@@ -35,8 +35,9 @@ class FakeClient:
     def reconnect_delay_set(self, min_delay, max_delay):
         self.reconnect_delay = (min_delay, max_delay)
 
-    def subscribe(self, topic, qos):
-        self.subscriptions.append((topic, qos))
+    def subscribe(self, topic, qos=0, options=None):
+        self.subscriptions.append((topic, qos, options))
+        return (0, 1)
 
     def publish(self, topic, payload, qos, retain):
         self.published.append((topic, payload, qos, retain))
@@ -44,6 +45,24 @@ class FakeClient:
 
     def disconnect(self):
         pass
+
+
+class FakeSubscribeOptions:
+    RETAIN_SEND_ON_SUBSCRIBE = 0
+    RETAIN_SEND_IF_NEW_SUB = 1
+    RETAIN_DO_NOT_SEND = 2
+
+    def __init__(
+        self,
+        qos=0,
+        noLocal=False,
+        retainAsPublished=False,
+        retainHandling=RETAIN_SEND_ON_SUBSCRIBE,
+    ):
+        self.QoS = qos
+        self.noLocal = noLocal
+        self.retainAsPublished = retainAsPublished
+        self.retainHandling = retainHandling
 
 
 class FakeClientFactory:
@@ -81,7 +100,9 @@ class MqttTransportTest(unittest.TestCase):
         client_module = types.ModuleType("paho.mqtt.client")
         client_module.Client = FakeClientFactory
         client_module.CallbackAPIVersion = types.SimpleNamespace(VERSION2=2)
-        client_module.MQTTv311 = 4
+        client_module.MQTTv5 = 5
+        subscribeoptions_module = types.ModuleType("paho.mqtt.subscribeoptions")
+        subscribeoptions_module.SubscribeOptions = FakeSubscribeOptions
         mqtt_module = types.ModuleType("paho.mqtt")
         mqtt_module.client = client_module
         paho_module = types.ModuleType("paho")
@@ -90,6 +111,7 @@ class MqttTransportTest(unittest.TestCase):
             "paho": paho_module,
             "paho.mqtt": mqtt_module,
             "paho.mqtt.client": client_module,
+            "paho.mqtt.subscribeoptions": subscribeoptions_module,
         }
 
     def test_will_subscription_and_non_retained_result(self):
@@ -104,13 +126,21 @@ class MqttTransportTest(unittest.TestCase):
                 on_disconnected=lambda reason: None,
             )
         client = FakeClientFactory.instances[-1]
-        self.assertTrue(client.kwargs["clean_session"])
+        self.assertNotIn("clean_session", client.kwargs)
+        self.assertEqual(client.kwargs["protocol"], 5)
         self.assertEqual(
             client.will,
             ("sanlightmesh/v1/test-pi/availability", "offline", 1, True),
         )
         transport._on_connect(client, None, None, 0)
-        self.assertEqual(client.subscriptions, [("sanlightmesh/v1/test-pi/command", 1)])
+        self.assertEqual(len(client.subscriptions), 1)
+        topic, qos, options = client.subscriptions[0]
+        self.assertEqual(topic, "sanlightmesh/v1/test-pi/command")
+        self.assertEqual(qos, 0)
+        self.assertEqual(options.QoS, 1)
+        self.assertFalse(options.noLocal)
+        self.assertTrue(options.retainAsPublished)
+        self.assertEqual(options.retainHandling, FakeSubscribeOptions.RETAIN_DO_NOT_SEND)
         self.assertEqual(connected, [True])
 
         transport.publish_json("sanlightmesh/v1/test-pi/result/x", {"ok": True})
@@ -119,3 +149,7 @@ class MqttTransportTest(unittest.TestCase):
         message = types.SimpleNamespace(topic="t", payload=b"{}", qos=1, retain=False)
         transport._on_message(client, None, message)
         self.assertEqual(incoming[-1], IncomingMessage("t", b"{}", 1, False))
+
+        retained = types.SimpleNamespace(topic="t", payload=b"{}", qos=1, retain=True)
+        transport._on_message(client, None, retained)
+        self.assertEqual(incoming[-1], IncomingMessage("t", b"{}", 1, True))

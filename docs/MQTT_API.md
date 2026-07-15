@@ -19,7 +19,7 @@ The protocol major version is part of the topic. Breaking changes require a new 
 | `command` | **never** | ioBroker/client requests |
 | `result/<COMMAND_ID>` | no | final result for one request ID |
 
-Command messages must be non-retained. Recommended QoS is 1. Application-level command IDs provide deduplication because QoS 1 may redeliver.
+Command messages must be non-retained. Recommended QoS is 1. Application-level command IDs provide deduplication because QoS 1 may redeliver. The gateway uses MQTT 5 subscription options `retainAsPublished=true` and `retainHandling=DO_NOT_SEND` so a live retained publication remains detectable while retained commands stored during downtime are never replayed to the gateway.
 
 ## Common command fields
 

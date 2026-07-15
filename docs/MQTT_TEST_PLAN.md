@@ -111,7 +111,8 @@ Wait at least ten seconds, then restore `68` using a new command ID.
 ## 9. Safety tests
 
 - Publish the exact same command ID again: it must republish the stored result without a second Mesh write.
-- Publish a retained command: it must be rejected.
+- Publish a retained command while the gateway is online: MQTT 5 `retainAsPublished` must preserve the retain flag and the gateway must reject it.
+- Publish a retained command while the gateway is offline, then start it: `retainHandling=DO_NOT_SEND` must prevent execution.
 - Publish rapid `set-max` commands for the same node: pending older requests should finish as `superseded`; only the newest should reach Bluetooth.
 - Stop the service and confirm retained availability changes to `offline` through Last Will.
 - Do not test blackout through MQTT until ordinary refresh/set/restore behavior is stable.

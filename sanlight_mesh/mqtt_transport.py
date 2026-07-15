@@ -34,11 +34,13 @@ class PahoMqttTransport:
     ) -> None:
         try:
             import paho.mqtt.client as mqtt
+            from paho.mqtt.subscribeoptions import SubscribeOptions
         except ImportError as exc:
             raise MqttTransportError(
                 "python3-paho-mqtt is missing; run scripts/install-mqtt-gateway.sh"
             ) from exc
         self.mqtt_module = mqtt
+        self.subscribe_options_class = SubscribeOptions
         self.config = config
         self._on_message_callback = on_message
         self._on_connected_callback = on_connected
@@ -51,15 +53,13 @@ class PahoMqttTransport:
             client = mqtt.Client(
                 callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
                 client_id=self.config.mqtt.client_id,
-                clean_session=True,
-                protocol=mqtt.MQTTv311,
+                protocol=mqtt.MQTTv5,
             )
-        except (AttributeError, TypeError):
-            client = mqtt.Client(
-                client_id=self.config.mqtt.client_id,
-                clean_session=True,
-                protocol=mqtt.MQTTv311,
-            )
+        except (AttributeError, TypeError) as exc:
+            raise MqttTransportError(
+                "paho-mqtt 2.x with MQTT 5 support is required for safe "
+                "retained-command detection"
+            ) from exc
         if self.config.mqtt.username is not None:
             password: str | None = None
             if self.config.mqtt.password_file is not None:
@@ -109,7 +109,22 @@ class PahoMqttTransport:
         if not self._reason_success(reason_code):
             print(f"MQTT connection rejected: {reason_code}", file=sys.stderr)
             return
-        client.subscribe(self.config.command_topic, qos=self.config.mqtt.qos)
+        options = self.subscribe_options_class(
+            qos=self.config.mqtt.qos,
+            noLocal=False,
+            retainAsPublished=True,
+            retainHandling=self.subscribe_options_class.RETAIN_DO_NOT_SEND,
+        )
+        result, _mid = client.subscribe(
+            self.config.command_topic,
+            options=options,
+        )
+        if int(result) != 0:
+            print(
+                f"MQTT command subscription failed: rc={result}",
+                file=sys.stderr,
+            )
+            return
         self._on_connected_callback()
 
     def _on_disconnect(self, client: Any, userdata: Any, *args: Any) -> None:

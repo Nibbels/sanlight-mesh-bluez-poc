@@ -39,7 +39,7 @@ from .traffic_safety import BRIGHTNESS_WRITE_MIN_INTERVAL_SECONDS
 from .state import StateError, read_state, validate_state_identity
 
 
-SERVICE_VERSION = "0.1.0"
+SERVICE_VERSION = "0.1.1"
 
 
 class GatewayServiceError(RuntimeError):
@@ -272,11 +272,11 @@ class SanlightMqttGateway:
             return
         fallback_id = self._best_effort_id(message.payload) or f"invalid-{uuid.uuid4().hex}"
         try:
-            command = decode_command(message.payload)
             if message.retain:
                 raise GatewayProtocolError(
                     "retained commands are rejected to prevent replay after reconnect"
                 )
+            command = decode_command(message.payload)
             if command.target not in ("all", "latest") and command.target not in self.nodes:
                 raise GatewayProtocolError(
                     f"target {command.target} is not a SANlight node in this CDB"

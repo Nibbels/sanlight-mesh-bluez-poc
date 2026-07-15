@@ -294,7 +294,7 @@ Implemented gateway boundary:
 - `mqtt_transport.py`: Paho connection, Last Will and retained state publishing;
 - `gateway_service.py`: orchestration, no-op suppression, expiry and state publishing.
 
-The MQTT service must never receive or publish CDB keys, DeviceKeys, BlueZ tokens, local file paths from clients, or arbitrary CLI options. Retained commands are rejected. Only verified values update retained node state.
+The MQTT service must never receive or publish CDB keys, DeviceKeys, BlueZ tokens, local file paths from clients, or arbitrary CLI options. The gateway requires MQTT 5. It subscribes with `retainAsPublished=true` so live retained publications remain detectable, and `retainHandling=DO_NOT_SEND` so retained commands stored while offline are not delivered on reconnect. Retained commands are rejected before payload decoding. Only verified values update retained node state.
 
 The first implementation intentionally keeps `bluetooth-meshd` persistent while using isolated CLI child transactions. This avoids unvalidated long-lived D-Bus object reuse and preserves the existing runtime lock/retry/readback behavior. A later in-process executor may replace this without changing MQTT API v1.
 

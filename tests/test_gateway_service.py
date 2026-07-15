@@ -140,6 +140,26 @@ class GatewayServiceTest(unittest.TestCase):
                 )
                 result = self.wait_for_result(transport, "cmd-1")
                 self.assertEqual(result["status"], "rejected")
+                self.assertIn("retained commands", result["message"])
+                self.assertEqual(gateway.executor.commands, [])
+            finally:
+                gateway.stop()
+
+    def test_retained_invalid_payload_is_rejected_before_decoding(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            gateway, transport = self.make_gateway(tmp)
+            try:
+                gateway.on_message(
+                    IncomingMessage(gateway.config.command_topic, b"", 1, True)
+                )
+                results = [
+                    payload
+                    for topic, payload, retained in transport.json_messages
+                    if "/result/invalid-" in topic
+                ]
+                self.assertEqual(len(results), 1)
+                self.assertEqual(results[0]["status"], "rejected")
+                self.assertIn("retained commands", results[0]["message"])
                 self.assertEqual(gateway.executor.commands, [])
             finally:
                 gateway.stop()
