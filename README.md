@@ -1,50 +1,80 @@
 # SANlight Mesh MQTT Gateway
 
-A local, community-built Bluetooth Mesh edge gateway for SANlight EVO dimmers. The Raspberry Pi remains close to the lamps, keeps all Mesh credentials local, and exposes a small versioned MQTT API for ioBroker or another automation system.
+A local, community-built Bluetooth Mesh gateway for SANlight EVO dimmers.
+The Raspberry Pi remains close to the lamps, keeps all Mesh credentials local,
+runs its own authenticated Mosquitto broker, and exposes a small versioned MQTT
+API for ioBroker or another automation system.
 
-![Multiple SANlight Mesh MQTT gateways connected through an MQTT broker to native ioBroker integration](docs/sanlight_mesh_mqtt_iobroker_architecture.png)
-
-The **MQTT gateway is the product path**. The hardened CLI remains its authoritative Mesh transaction engine and provides advanced diagnostics, maintenance, replay recovery, clock commands, MaxBrightness control, blackout and restore.
+The **MQTT gateway is the product path**. The hardened CLI remains its
+authoritative Mesh transaction engine and provides advanced diagnostics,
+maintenance, replay recovery, clock commands, MaxBrightness control, blackout
+and restore.
 
 ## One-command installation
 
-After cloning the repository and placing the private SANlight export at `private/SANlightMesh.json`, run:
+After cloning the repository and placing the private SANlight export at
+`private/SANlightMesh.json`, run:
 
 ```bash
 sudo bash scripts/install-gateway.sh
 ```
 
-The installer performs the complete local deployment:
+The installer performs the complete lamp-side deployment:
 
 - validates the private CDB and runs the offline safety suite;
-- installs BlueZ, Python and MQTT dependencies;
+- installs BlueZ, Python, Paho MQTT, Mosquitto and MQTT client tools;
 - installs the exclusive `generic:hci0` Mesh service;
 - safely adopts existing BlueZ identities or imports genuinely absent identities;
-- creates or reuses protected MQTT configuration and credentials;
+- creates a local authenticated broker with gateway-scoped ACLs;
+- creates protected credentials for the local gateway and remote ioBroker client;
 - installs and starts the MQTT gateway service;
+- prints the settings required by the ioBroker adapter;
 - runs read-only health checks.
 
-It never changes lamp brightness or lamp time. A gateway startup may perform the configured **read-only** refresh.
+It never changes lamp brightness or lamp time. A gateway startup may perform the
+configured **read-only** refresh. The installer preserves compatible existing
+Mesh state and stops safely when the local identity state is inconsistent.
 
-The installer preserves compatible existing Mesh state and stops safely when the local identity state is inconsistent.
+See **[SETUP.md](SETUP.md)** for the minimal clean-host procedure and
+**[INSTRUCTIONS.md](INSTRUCTIONS.md)** for operation, updates, recovery and
+advanced maintenance.
 
-See **[SETUP.md](SETUP.md)** for the minimal clean-host procedure and **[INSTRUCTIONS.md](INSTRUCTIONS.md)** for operation, updates, recovery and advanced flags.
-
-## Deployment model
+## Default deployment model
 
 ```text
 SANlight lamps
       |
       | Bluetooth Mesh
       v
-SANlight gateway Raspberry Pi
+SANlight-PoCe Raspberry Pi
+  BlueZ Mesh + gateway + Mosquitto
+      ^
+      | MQTT over the trusted LAN
       |
-      | MQTT v1
-      v
-Broker / ioBroker host
+ioBroker Raspberry Pi
+  ioBroker.sanlightmesh adapter + automation
 ```
 
-Each physical gateway or grow room should use its own `gateway.id`, broker ACL scope and native ioBroker adapter instance. The companion adapter is maintained separately in [`Nibbels/ioBroker.sanlightmesh`](https://github.com/Nibbels/ioBroker.sanlightmesh).
+The gateway process connects to its broker through `127.0.0.1`. The ioBroker
+adapter connects to a stable LAN IP or hostname of the SANlight gateway Pi.
+
+## Multiple SANlight gateways
+
+Multiple independent SANlight gateway Pis are an intended deployment:
+
+```text
+sanlightmesh.0 -> SANlight-PoCe room-a -> gateway.id room-a
+sanlightmesh.1 -> SANlight-PoCe room-b -> gateway.id room-b
+sanlightmesh.2 -> SANlight-PoCe greenhouse -> gateway.id greenhouse
+```
+
+One native ioBroker adapter instance manages exactly one configured gateway.
+Each instance connects to that gateway Pi's broker and subscribes only to the
+exact `sanlightmesh/v1/<gateway-id>/...` topic root. This prevents lamps from
+separate rooms or buildings from being combined accidentally.
+
+The companion adapter is maintained separately in
+[`Nibbels/ioBroker.sanlightmesh`](https://github.com/Nibbels/ioBroker.sanlightmesh).
 
 ## Operations
 
@@ -55,7 +85,9 @@ sudo sanlight-gateway logs
 sudo sanlight-gateway collect-diagnostics
 ```
 
-The diagnostics bundle is intentionally redacted. Never publish the private CDB, `.state/`, `/var/lib/bluetooth/mesh`, password files, NetKey, AppKey, DeviceKeys or BlueZ tokens.
+The diagnostics bundle is intentionally redacted. Never publish the private
+CDB, `.state/`, `/var/lib/bluetooth/mesh`, password files, NetKey, AppKey,
+DeviceKeys or BlueZ tokens.
 
 ## Current validation status
 
@@ -66,18 +98,19 @@ The diagnostics bundle is intentionally redacted. Never publish the private CDB,
 | Read-only lamp and MaxBrightness queries | hardware validated |
 | Verified `set-max`, blackout and protected restore | hardware validated |
 | MQTT v1 gateway with Mosquitto and generic ioBroker integration | hardware validated |
-| End-to-end installer and missing-state adoption | implemented; target-host validation required |
+| Unified local-broker installer and missing-state adoption | implemented; target-host validation required |
 | Native `ioBroker.sanlightmesh` adapter | maintained in separate repository |
 
-This remains a pre-1.0 community project. Other firmware versions, Mesh layouts, brokers and network-security designs require separate validation.
+This remains a pre-1.0 community project. Other firmware versions, Mesh layouts
+and network-security designs require separate validation.
 
 ## Documentation
 
 - **[SETUP.md](SETUP.md)** — minimal end-to-end installation
-- **[INSTRUCTIONS.md](INSTRUCTIONS.md)** — operation, updates, recovery and advanced flags
-- **[docs/MQTT_GATEWAY.md](docs/MQTT_GATEWAY.md)** — gateway operation and broker details
+- **[INSTRUCTIONS.md](INSTRUCTIONS.md)** — operation, updates, recovery and advanced maintenance
+- **[docs/MQTT_GATEWAY.md](docs/MQTT_GATEWAY.md)** — gateway and local broker operation
 - **[docs/MQTT_API.md](docs/MQTT_API.md)** — versioned MQTT v1 contract
-- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — deployment boundaries
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — deployment and multi-instance boundaries
 - **[docs/INSTALLER.md](docs/INSTALLER.md)** — installer design and state matrix
 - **[docs/IOBROKER_INTEGRATION.md](docs/IOBROKER_INTEGRATION.md)** — ioBroker integration
 - **[docs/MQTT_TEST_PLAN.md](docs/MQTT_TEST_PLAN.md)** — validation record and regression plan

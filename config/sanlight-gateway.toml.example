@@ -1,5 +1,6 @@
-# Copy this file to private/sanlight-gateway.toml and chmod it to 600.
-# Do not place MQTT passwords directly in this file. Use password_file.
+# The normal installer generates /etc/sanlight-mesh-mqtt-gateway/gateway.toml.
+# This file is an advanced manual-reference example only.
+# Never place MQTT passwords directly in TOML; use password_file.
 
 [gateway]
 id = "sanlight-pi"
@@ -20,15 +21,13 @@ refresh_on_start = true
 refresh_interval_seconds = 1800
 
 [mqtt]
-host = "192.168.1.10"
+# The normal product topology runs Mosquitto on this same gateway Pi.
+host = "127.0.0.1"
 port = 1883
 topic_prefix = "sanlightmesh/v1"
 client_id = "sanlightmesh-sanlight-pi"
 keepalive_seconds = 60
 qos = 1
-
-# Recommended for a broker outside a fully trusted LAN:
-# username = "sanlight-gateway"
-# password_file = "mqtt-password.txt"
-# tls = true
-# ca_cert = "/etc/ssl/certs/ca-certificates.crt"
+username = "sanlight-gateway-sanlight-pi"
+password_file = "/etc/sanlight-mesh-mqtt-gateway/mqtt-password.txt"
+tls = false

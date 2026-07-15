@@ -35,18 +35,28 @@ sudo ./scripts/sanlight-env-check.sh --allow-unsupported
 
 ## Installation behavior
 
-The complete setup performs these stages in order:
+The complete product setup performs these stages in order:
 
 1. secure and semantically validate the CDB;
-2. require an IV Index when the CDB omits it;
-3. compile Python and run offline tests;
-4. install Debian packages, including `rfkill`;
+2. determine a mutually consistent IV Index from the CDB, existing project state, validated BlueZ identity state or an explicit `--iv-index` value;
+3. install the validated BlueZ, Python, Paho MQTT, Mosquitto and diagnostic packages;
+4. compile Python and run the offline safety suite;
 5. verify trixie, 64-bit ARM, BlueZ 5.82, `hci0`, D-Bus and GLib;
-6. install and start `sanlight-meshd-generic.service`;
-7. configure the local control and sender identities;
-8. print only read-only verification guidance.
+6. safely adopt or import the control and canonical-sender identities;
+7. install and start `sanlight-meshd-generic.service`;
+8. create separate local-gateway and remote-ioBroker MQTT credentials;
+9. configure an authenticated local Mosquitto broker with gateway-scoped ACLs;
+10. generate the gateway TOML for `127.0.0.1:1883`;
+11. install and start `sanlight-mqtt-gateway.service`;
+12. print the ioBroker adapter settings and run read-only diagnostics.
 
-No state is reset by default. On a clean image, use the normal setup command. An explicit reset is reserved for repairing inconsistent local BlueZ state:
+The normal command is:
+
+```bash
+sudo bash scripts/install-gateway.sh
+```
+
+No state is reset by default. An explicit reset is reserved for repairing deliberately selected inconsistent local BlueZ state through the lower-level maintenance helper:
 
 ```bash
 sudo bash ./scripts/setup-all.sh \
@@ -67,6 +77,9 @@ The following material is private:
 - `.state/blackout-*.json` restore snapshots
 - `.state/brightness-write-rate.json` safety state
 - BlueZ Mesh database under `/var/lib/bluetooth/mesh`
+- `/etc/sanlight-mesh-mqtt-gateway/mqtt-password.txt`
+- `/etc/sanlight-mesh-mqtt-gateway/iobroker-mqtt-password.txt`
+- `/etc/mosquitto/sanlight-mesh-mqtt-gateway.passwd`
 
 The project state directory is mode `0700`; state files are atomically written with mode `0600`. Tokens are never printed during import or attach. A mode-`0600` runtime lock rejects concurrent commands that would compete for the same D-Bus object paths. The files are ignored by Git.
 
@@ -334,61 +347,45 @@ timedatectl
 sudo raspi-config
 ```
 
-## External MQTT broker prerequisite
+## Local MQTT broker and ioBroker connection
 
-The lamp-side gateway is an MQTT client. `scripts/install-gateway.sh` installs the gateway runtime and its MQTT client dependency, but it deliberately does not install or configure a broker on another host.
-
-The validated ioBroker deployment runs Mosquitto on the ioBroker host and runs the ioBroker MQTT adapter in client/subscriber mode. The repository provides a separate broker-host helper:
-
-```bash
-sudo bash scripts/install-mosquitto-broker.sh
-```
-
-Run that script on the broker/ioBroker host, not on the lamp-side gateway host. When the repository is not present there, copy only the script to that host first.
-
-The broker helper is intended for a clean Debian or Raspberry Pi OS Mosquitto installation. It:
-
-1. installs `mosquitto` and `mosquitto-clients` unless `--skip-packages` is supplied;
-2. refuses to merge automatically when another listener or authentication configuration exists under `/etc/mosquitto/conf.d`;
-3. creates a password-authenticated listener, defaulting to `0.0.0.0:1883`;
-4. creates separate `sanlight-gateway` and `sanlight-iobroker` password entries;
-5. writes an ACL restricted to one `sanlightmesh/v1/<gateway-id>/...` namespace;
-6. disables anonymous access;
-7. restarts Mosquitto, verifies the listener and verifies that anonymous publication is rejected.
-
-Managed files are:
+The normal product topology is self-contained on the lamp-side Raspberry Pi:
 
 ```text
-/etc/mosquitto/conf.d/sanlight-mesh-gateway.conf
-/etc/mosquitto/sanlight-mesh-passwords
-/etc/mosquitto/sanlight-mesh-acl
+SANlight lamps <-Bluetooth Mesh-> SANlight gateway Pi
+                                   BlueZ + gateway + Mosquitto
+                                                       ^
+                                                       | trusted-LAN MQTT
+                                                       |
+                                                ioBroker adapter
 ```
 
-The password and ACL files are readable by root and the `mosquitto` group only. Existing managed passwords are preserved on a normal rerun. Use `--reset-passwords` only for a deliberate credential rotation, then update both the gateway and ioBroker configurations.
+`scripts/install-gateway.sh` installs and configures Mosquitto on the same Raspberry Pi as the SANlight gateway. The gateway client always uses `127.0.0.1:1883`. There is no second broker-host installer and no broker host, username, password or TLS prompt in the normal setup.
 
-The generated ACL grants:
-
-- `sanlight-gateway`: read access to `command` and write access to `availability`, `gateway/#`, `nodes/#` and `result/#`;
-- `sanlight-iobroker`: write access to `command` and read access to the gateway output topics.
-
-The default broker helper does not configure TLS. Passwords and MQTT payloads therefore travel unencrypted and this setup is suitable only for a trusted private LAN. Use a separately reviewed TLS configuration for untrusted or routed networks.
-
-When Mosquitto and ioBroker run on the same host, configure the ioBroker adapter for `localhost:1883`. Configure the remote lamp-side gateway with the broker host's LAN IP or DNS name; `localhost` on that gateway would refer to the wrong machine.
-
-The ioBroker adapter's server mode is not the validated broker path and has not been validated against the gateway's MQTT 5 retained-command subscription safeguards.
-
-Broker helper options:
+The installer creates:
 
 ```text
---gateway-id ID
---port PORT
---bind-address ADDRESS
---reset-passwords
---skip-packages
---yes
+/etc/mosquitto/conf.d/sanlight-mesh-mqtt-gateway.conf
+/etc/mosquitto/sanlight-mesh-mqtt-gateway.passwd
+/etc/mosquitto/sanlight-mesh-mqtt-gateway.acl
+/etc/sanlight-mesh-mqtt-gateway/mqtt-password.txt
+/etc/sanlight-mesh-mqtt-gateway/iobroker-mqtt-password.txt
 ```
 
-Detailed ioBroker client settings are in [docs/IOBROKER_INTEGRATION.md](docs/IOBROKER_INTEGRATION.md).
+Anonymous access is disabled. Separate random users are generated for the local gateway and the remote ioBroker adapter. Each ACL is restricted to the exact `sanlightmesh/v1/<gateway-id>/...` namespace. Clear-text password files are root-only mode `0600`; the Mosquitto password database contains hashes and is group-readable only by the broker service.
+
+The default listener is reachable through the Raspberry Pi's IPv4 LAN interfaces so that ioBroker can connect. Plain MQTT is intended only for a trusted private LAN or VLAN. Do not forward port `1883` from the internet. TLS, a shared broker or another broker host is an unsupported custom topology that requires deliberate code/configuration changes and separate validation.
+
+Configure the native ioBroker adapter with:
+
+- broker host: a stable LAN IP or hostname of the SANlight gateway Pi;
+- broker port: `1883`;
+- username and password printed/referenced by the installer;
+- the exact gateway ID selected during installation.
+
+One adapter instance manages one physical gateway. Multiple SANlight gateway Pis are supported by creating multiple ioBroker adapter instances, for example `sanlightmesh.0`, `sanlightmesh.1` and `sanlightmesh.2`. Each instance connects to its corresponding gateway Pi and exact gateway ID; instances must not discover or combine all gateways through a wildcard subscription.
+
+Detailed settings are in [docs/IOBROKER_INTEGRATION.md](docs/IOBROKER_INTEGRATION.md).
 
 ## End-to-end installer and BlueZ identity-state adoption
 
@@ -396,7 +393,7 @@ The normal installation and upgrade command is:
 
     sudo bash scripts/install-gateway.sh
 
-It installs both persistent services, all Mesh/MQTT dependencies and the protected MQTT configuration. `setup-all.sh`, `install-service.sh` and `install-mqtt-gateway.sh` are lower-level helpers rather than separate user-facing installation phases.
+It installs the local Mosquitto broker, both persistent project services, all Mesh/MQTT dependencies and the protected MQTT configuration. `setup-all.sh`, `install-service.sh` and `install-mqtt-gateway.sh` are lower-level helpers rather than separate user-facing installation phases.
 
 Existing BlueZ identities are adopted rather than re-imported. If the protected project state is missing while the matching CDB-derived BlueZ identity remains intact, the installer reconstructs the project state only after strict validation. Inconsistent or ambiguous state combinations abort without modifying the identity.
 
@@ -415,15 +412,34 @@ The BlueZ path is derived strictly from the expected provisioner UUID. Recovery 
 
 Recovery reconstructs only `.state/control-provisioner.json` or `.state/canonical-sender.json` using the normal atomic mode-`0600` writer. It never changes `sequenceNumber`, copies AppKeys, or edits another BlueZ field.
 
-For an update, keep all private state and credentials:
+For an update, keep all private Mesh state and run:
 
     git pull --ff-only
     ./scripts/run-tests.sh
     sudo bash scripts/install-gateway.sh --reuse-existing
 
+A legacy config that points to the former external broker is migrated to the
+local broker automatically. The gateway ID, CDB/state paths and refresh interval
+are preserved, while new gateway/ioBroker MQTT credentials are generated. Use
+the newly printed settings in the ioBroker adapter.
+
 The lower-level `scripts/setup-all.sh` and `scripts/install-service.sh` helpers still support `--reset-mesh-state` for a deliberate complete local reinitialization. The option is intentionally destructive, is never implied by `scripts/install-gateway.sh`, and must not be used for routine updates or to recover a missing `.state/` directory while the corresponding BlueZ databases still exist.
 
 ## Service operation
+
+Complete read-only health check:
+
+```bash
+sudo sanlight-gateway doctor
+```
+
+The default installation has three persistent services:
+
+```bash
+systemctl is-active mosquitto.service
+systemctl is-active sanlight-meshd-generic.service
+systemctl is-active sanlight-mqtt-gateway.service
+```
 
 Status:
 
@@ -468,7 +484,7 @@ Use the merged `main` branch for installed systems and rerun the single product 
     ./scripts/run-tests.sh
     sudo bash scripts/install-gateway.sh --reuse-existing
 
-This refreshes both systemd units and updates the configured `project_root` while retaining the private CDB, BlueZ databases, protected project state and MQTT credentials. The normal `scripts/install-gateway.sh` installation and update path never resets Mesh state. A destructive reset occurs only when `--reset-mesh-state` is explicitly supplied to one of the lower-level Mesh setup helpers documented above.
+This refreshes the Mosquitto policy, both systemd units and the configured `project_root` while retaining the private CDB, BlueZ databases, protected project state and both MQTT credentials. The normal `scripts/install-gateway.sh` installation and update path never resets Mesh state. A destructive reset occurs only when `--reset-mesh-state` is explicitly supplied to one of the lower-level Mesh setup helpers documented above.
 
 ## Removing only the canonical sender
 
@@ -697,7 +713,7 @@ During the completed MQTT hardware validation on 2026-07-15, 97 tests passed on 
 
 ## MQTT gateway operation
 
-The MQTT service is the normal product runtime. Keep this Raspberry Pi near the lamps when the ioBroker host is outside reliable Bluetooth range and run the merged service from `main`. The lamp-side Pi remains the only host containing the private CDB and BlueZ state.
+The MQTT service is the normal product runtime. Keep this Raspberry Pi near the lamps when the ioBroker host is outside reliable Bluetooth range and run the merged service from `main`. The lamp-side Pi contains the private CDB, BlueZ state, local Mosquitto broker and gateway process; the ioBroker host needs only one native adapter instance per gateway Pi.
 
 Configuration, installation and operation are documented in [docs/MQTT_GATEWAY.md](docs/MQTT_GATEWAY.md). The versioned broker contract is in [docs/MQTT_API.md](docs/MQTT_API.md), the completed hardware validation is in [docs/MQTT_TEST_PLAN.md](docs/MQTT_TEST_PLAN.md), and the validated generic ioBroker path is in [docs/IOBROKER_INTEGRATION.md](docs/IOBROKER_INTEGRATION.md).
 

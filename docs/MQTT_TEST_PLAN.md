@@ -4,7 +4,9 @@ The original feature-branch test plan was completed on real hardware on 2026-07-
 
 This file records what was validated and the minimum regression sequence for future gateway changes.
 
-## Validated reference topology
+## Previously validated reference topology
+
+The original hardware validation used:
 
 - lamp-side Raspberry Pi 3 running Debian 13 `trixie`, BlueZ 5.82 and `generic:hci0`;
 - persistent `sanlight-meshd-generic.service`;
@@ -14,6 +16,12 @@ This file records what was validated and the minimum regression sequence for fut
 - generic ioBroker MQTT adapter in client/subscriber mode;
 - two real SANlight lamp nodes;
 - MQTT API v1, gateway service version `0.1.1` during validation.
+
+The current supported product topology now installs Mosquitto on the same
+lamp-side Raspberry Pi as the Mesh gateway. The MQTT API and command-safety
+runtime are unchanged, but the unified local-broker installer, systemd ordering,
+credentials/ACL generation and native multi-instance adapter path require a new
+target-host regression before they can be marked hardware validated.
 
 Addresses, node names, IP addresses and credentials are installation-specific and are intentionally omitted here.
 
@@ -118,17 +126,21 @@ At minimum validate:
 - same-node coalescing;
 - write-rate guard;
 - explicit blackout and restore when blackout code changed;
-- gateway and broker restart recovery;
+- gateway and local broker restart recovery;
+- anonymous broker access rejection and gateway-scoped ACL denial cases;
 - full Raspberry Pi reboot when service/install files changed.
 
 ### 8. Verify ioBroker
 
-Confirm:
+For the generic validation adapter, or for the native adapter once installed,
+confirm:
 
-- `mqtt.0.info.connection` is `true`;
+- the selected adapter instance connects to the corresponding SANlight gateway Pi;
 - gateway availability is `online`;
-- node state objects contain JSON strings with `verified: true`;
-- a JavaScript-published read-only command receives its result.
+- verified node state is received;
+- a read-only command receives its correlated result;
+- a second adapter instance can connect to a second gateway/broker without
+  creating objects under the first instance.
 
 ## Safety boundary
 

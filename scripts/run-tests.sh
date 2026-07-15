@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+
 set -euo pipefail
 umask 077
 
@@ -15,13 +16,12 @@ paths = [
     root / "sanlight_canonical_sender_poc.py",
     root / "sanlight_protocol.py",
     root / "sanlight_mqtt_gateway.py",
+    root / "scripts" / "mosquitto-password.py",
 ]
 for directory in (root / "sanlight_mesh", root / "tests"):
     paths.extend(sorted(directory.rglob("*.py")))
-
 for path in paths:
     compile(path.read_bytes(), str(path), "exec")
-
 print(f"Python syntax check: OK ({len(paths)} files)")
 PY
 
@@ -39,7 +39,7 @@ if grep -RInE \
     --exclude='*.png' \
     --exclude='run-tests.sh' \
     '(JoinComplete token:|Attaching .* token [0-9a-fA-F]|using token [0-9a-fA-F])' \
-    README.md SETUP.md INSTRUCTIONS.md AI_CONTEXT.md \
+    README.md SETUP.md INSTRUCTIONS.md AI_CONTEXT.md SECURITY.md \
     sanlight_canonical_sender_poc.py sanlight_protocol.py \
     sanlight_mesh scripts systemd tests
 then

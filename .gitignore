@@ -2,6 +2,9 @@
 private/*
 !private/.gitkeep
 SANlightMesh.json
+mqtt-password.txt
+iobroker-mqtt-password.txt
+sanlight-mesh-mqtt-gateway.passwd
 
 # Local BlueZ identity tokens/state
 .state/

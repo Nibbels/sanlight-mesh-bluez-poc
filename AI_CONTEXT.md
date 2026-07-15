@@ -2,212 +2,274 @@
 
 ## Project objective
 
-This repository controls SANlight EVO Bluetooth Mesh dimmers from a Raspberry Pi through BlueZ. It now contains both a hardened command-line control path and an always-on MQTT edge gateway. The CLI remains the authoritative Mesh transaction engine; the gateway adds serialized, versioned and auditable LAN integration without exposing Mesh secrets.
+This repository controls SANlight EVO Bluetooth Mesh dimmers from a Raspberry Pi
+through BlueZ. The product path is a self-contained lamp-side appliance:
 
-The current validated host path is:
+```text
+SANlight lamps <-Bluetooth Mesh-> gateway Pi
+                                  BlueZ + Python gateway + local Mosquitto
+                                                      ^
+                                                      | trusted-LAN MQTT
+                                                      |
+                                             ioBroker adapter
+```
 
-- Raspberry Pi OS Lite 64-bit / Debian 13 trixie
-- BlueZ 5.82
-- internal Raspberry Pi Bluetooth controller exposed as `hci0`
-- `bluetooth-meshd --io generic:hci0 --nodetach`
-- exclusive controller use by `sanlight-meshd-generic.service`
+The CLI remains the authoritative Mesh transaction engine. The MQTT service adds
+serialized, versioned and auditable LAN integration without exposing Mesh
+secrets. `scripts/install-gateway.sh` is the only public installer.
 
-Do not replace this with the default BlueZ mesh service or a different I/O backend without a separately validated test.
+The validated host path is:
 
-## Non-negotiable security invariants
+- Raspberry Pi OS Lite 64-bit / Debian 13 `trixie`;
+- BlueZ 5.82;
+- internal Raspberry Pi controller `hci0`;
+- `bluetooth-meshd --io generic:hci0 --nodetach`;
+- exclusive controller use by `sanlight-meshd-generic.service`.
+
+Do not replace this with the default BlueZ Mesh service or a different I/O
+backend without a separate hardware validation.
+
+## Product topology and ioBroker instances
+
+The normal installer puts Mosquitto on the same Pi as BlueZ and the SANlight
+gateway. The gateway client connects to `127.0.0.1:1883`. ioBroker connects to a
+stable LAN IP/hostname of that Pi.
+
+Multiple physical SANlight gateway Pis are intentional. The adapter contract is:
+
+- one `ioBroker.sanlightmesh` instance manages exactly one gateway ID;
+- one instance has one broker connection;
+- each instance subscribes only to
+  `sanlightmesh/v1/<configured-gateway-id>/...`;
+- normal discovery must never wildcard and combine every gateway;
+- separate rooms/buildings use separate gateway IDs, credentials and adapter
+  instances;
+- a custom shared-broker fork would still require one adapter instance per gateway.
+
+The separate adapter repository is:
+
+```text
+https://github.com/Nibbels/ioBroker.sanlightmesh
+```
+
+The adapter must never use SSH, import the CDB, receive Mesh keys, invoke Python
+CLI commands remotely, or duplicate BlueZ logic. MQTT API v1 is the only runtime
+contract between repositories.
+
+## Non-negotiable secret boundary
 
 Never print, commit, publish or paste:
 
-- `private/SANlightMesh.json`
-- NetKey
-- AppKey
-- DeviceKey
-- BlueZ `JoinComplete`/attach token values
-- the contents of `.state/*.json`
-- the BlueZ Mesh database
-- MQTT password files and broker credentials
+- `private/SANlightMesh.json`;
+- NetKey, AppKey or DeviceKey values;
+- BlueZ JoinComplete/attach token values;
+- contents of `.state/*.json`;
+- `/var/lib/bluetooth/mesh` contents;
+- `/etc/sanlight-mesh-mqtt-gateway/mqtt-password.txt`;
+- `/etc/sanlight-mesh-mqtt-gateway/iobroker-mqtt-password.txt`;
+- Mosquitto password databases or broker credentials.
 
-Safe diagnostic output may contain mesh UUID, provisioner UUID/name, App-ID, unicast addresses, group names, node names, opcodes and access PDUs. Access PDUs built by the CLI do not contain NetKey/AppKey/DeviceKey.
+Safe diagnostics may contain Mesh UUID, provisioner UUID/name, App-ID, unicast
+addresses, group names, node names, opcodes and access PDUs. State writes remain
+atomic. `.state/` is mode `0700`; JSON and clear-text password files are mode
+`0600`.
 
-State writes must remain atomic. `.state/` is mode `0700`; JSON state files are mode `0600`. Identity mismatch errors must not echo old or expected private values.
+## Local broker invariants
 
-## Safety invariants
-
-- MaxBrightness accepts only integer `20..100`.
-- `0`, `1..19`, negative values and values above `100` must be rejected before D-Bus.
-- `build_set_max_brightness_pdu()` must independently enforce the same range.
-- Unicast `set-max` may retry the exact same idempotent value once after a lost
-  `0x07` acknowledgement, but must never perform an unbounded write loop.
-- A `0x07` status counts only when source node, AppKey index and response
-  destination match the active transaction. It is an acknowledgement, not the
-  final configured-value proof.
-- Every unicast `set-max` must finish with a read-only GetMaxBrightness query. A
-  valid `0x09` response must come from the requested node, use the expected
-  AppKey, target the canonical sender, contain exactly one byte and report a
-  value in `20..100`.
-- Readback may retry once. A matching value returns `0`; missing readback returns
-  `3`; a persistent valid mismatch returns `4`. Readback retries must never
-  trigger additional writes.
-- Standalone `get-max` is read-only and follows the same strict status matching
-  and bounded retry rules.
-- Group `set-max` is transmitted once because member responses cannot establish
-  group-wide confirmation; automatic group-wide readback is not claimed.
-- `0xFFFF` is rejected.
-- Destinations must exist in the CDB.
-- `get-live`, `get-net-tx`, `set-time`, `set-uptime` and targeted `sync-now` require unicast nodes.
-- Destination `all` expands to individually detected SANlight vendor-model nodes; it is not a Mesh all-nodes broadcast.
-- Setup must never call `set-max`, `set-time`, `set-uptime` or `sync-now`.
-- Setup may configure the local canonical sender and set its Bluetooth Mesh Default TTL to 5.
-
-## Repository architecture
+The public installer owns the dedicated local broker configuration:
 
 ```text
-sanlight_canonical_sender_poc.py  stable CLI compatibility entry point
-sanlight_mqtt_gateway.py          stable MQTT service entry point
-sanlight_protocol.py              compatibility re-exports
-sanlight_mesh/
-  cli.py                          argparse, offline preflight and redacted output
-  cdb.py                          strict CDB loading and destination validation
-  protocol.py                     pure PDU, status decoding and clock helpers
-  max_brightness_policy.py        bounded write/readback and status-match policy
-  set_max_policy.py               compatibility re-export for the v6 module name
-  state.py                        private atomic token-state storage
-  locking.py                      exclusive single-process runtime guard
-  bluez_runtime.py                D-Bus applications, elements and workflows
-  gateway_config.py               strict mode-0600 TOML configuration
-  gateway_protocol.py             MQTT v1 validation and result envelopes
-  gateway_queue.py                bounded serialization and setpoint coalescing
-  gateway_store.py                atomic dedup, in-flight and verified-state data
-  gateway_executor.py             fixed-argv, no-shell bridge to the CLI engine
-  mqtt_transport.py               MQTT 5, Last Will and retained state publishing
-  gateway_service.py              orchestration, expiry and state publication
-scripts/
-  setup-all.sh                    ordered first-time setup
-  install-service.sh              BlueZ service installation and readiness check
-  install-mqtt-gateway.sh         MQTT gateway service installation
-  start-meshd-generic.sh          generic:hci0 launcher
-  sanlight-env-check.sh           validated-platform checks
-  run-tests.sh                    offline tests and static token-output scan
-systemd/
-  sanlight-meshd-generic.service.example
-  sanlight-mqtt-gateway.service.example
-docs/
-  MQTT_GATEWAY.md                 gateway installation and operation
-  MQTT_API.md                     versioned broker contract
-  MQTT_TEST_PLAN.md               validation record and regression plan
-  IOBROKER_INTEGRATION.md         generic integration and native-adapter boundary
-schemas/                          MQTT v1 JSON schemas
-tests/                            standard-library unittest suite; fake keys only
+/etc/mosquitto/conf.d/sanlight-mesh-mqtt-gateway.conf
+/etc/mosquitto/sanlight-mesh-mqtt-gateway.passwd
+/etc/mosquitto/sanlight-mesh-mqtt-gateway.acl
 ```
 
-Offline commands deliberately do not import `dbus` or `gi`. This allows CDB validation and tests before package installation.
+Rules:
+
+- install Mosquitto and clients in the same package phase as BlueZ/Paho;
+- default listener is IPv4 TCP 1883 on the trusted LAN;
+- gateway TOML uses `127.0.0.1:1883`;
+- anonymous access is disabled;
+- generate separate random gateway and ioBroker users;
+- ACL every user to one exact gateway ID;
+- do not define duplicate global persistence settings in the project fragment;
+- require the validated Debian Mosquitto configuration to enable persistence;
+- refuse to merge with unrelated listener/authentication fragments;
+- do not expose port 1883 to the internet;
+- TLS or external/shared brokers are unsupported custom forks, not alternate
+  normal setup paths;
+- pass secrets to `mosquitto_passwd` through a pseudo-terminal, never in argv;
+- `--reuse-existing` preserves localhost/port-1883/TLS-disabled generated
+  credentials; a legacy external-broker config is migrated to localhost while
+  preserving gateway/CDB/state/refresh settings and generating new credentials;
+- every successful public installation ends in the local-broker topology;
+- a missing ioBroker password on repair may be regenerated, but the installer
+  must clearly say that the adapter password must be updated.
+
+Gateway ACL for ID `<id>`:
+
+```text
+read  sanlightmesh/v1/<id>/command
+write sanlightmesh/v1/<id>/availability
+write sanlightmesh/v1/<id>/gateway/#
+write sanlightmesh/v1/<id>/nodes/#
+write sanlightmesh/v1/<id>/result/#
+```
+
+ioBroker ACL:
+
+```text
+write sanlightmesh/v1/<id>/command
+read  sanlightmesh/v1/<id>/availability
+read  sanlightmesh/v1/<id>/gateway/#
+read  sanlightmesh/v1/<id>/nodes/#
+read  sanlightmesh/v1/<id>/result/#
+```
+
+## Installer transaction ordering
+
+`scripts/install-gateway.sh` must preserve this high-level order:
+
+1. resolve/protect CDB, config and state paths;
+2. read an existing protected config when `--reuse-existing` is used;
+3. prompt only for gateway ID and refresh interval on a normal new install;
+4. install BlueZ, Python, Paho, Mosquitto and MQTT client packages once;
+5. run offline compile/unit/source-security tests;
+6. validate Raspberry Pi / BlueZ environment;
+7. stop project services;
+8. reconcile both exact CDB-derived identities with BlueZ storage;
+9. install/start Mesh service and attach/import identities;
+10. create/reuse gateway and ioBroker broker credentials;
+11. write the dedicated Mosquitto password database, ACL and listener fragment;
+12. restart and validate Mosquitto; anonymous access must fail;
+13. write/validate the gateway TOML using localhost;
+14. install/start the gateway service;
+15. run read-only diagnostics and print ioBroker connection settings.
+
+Installation must never send lamp brightness or clock commands. The public
+installer must never expose `--reset-mesh-state`. Lower-level helpers retain
+explicit destructive reset only for deliberate maintenance.
 
 ## CDB identity model
 
-The default identities are loaded by node name:
+Default identities are loaded by node name:
 
-- control App-ID 1: `SANlight Provisioner 1`, typically primary unicast `0x2400`
-- canonical sender App-ID 2: `SANlight Provisioner 2`, typically primary unicast `0x2800`
+- control App-ID 1: `SANlight Provisioner 1`, typically unicast `0x2400`;
+- canonical sender App-ID 2: `SANlight Provisioner 2`, typically `0x2800`.
 
-Addresses are CDB-derived and must not be hard-coded as universal. Both identities must share mesh UUID, primary NetKey index/key and primary AppKey index/key, while using distinct provisioner UUIDs and unicast addresses.
+Addresses are CDB-derived and must not be hard-coded as universal. Both
+identities share Mesh UUID, primary NetKey and AppKey material, but use distinct
+provisioner UUIDs and unicast addresses.
 
-A SANlight lamp node is detected only when:
-
-- node `cid` is `0A8B`; and
-- an element contains vendor model ID `0A8B0001`.
-
-This avoids treating provisioners or unrelated CDB nodes as lamps for destination `all`.
-
-## Validated protocol material
-
-Company ID: `0x0A8B`, encoded little-endian as `8B 0A` after a three-octet vendor opcode.
-
-- SetMaxBrightness: opcode `0x06`, access prefix `C6 8B 0A`, one percent byte
-- SetMaxBrightness Status: `C7 8B 0A`
-- GetMaxBrightness: `C8 8B 0A`
-- GetMaxBrightness Status: `C9 8B 0A <PERCENT>`; the validated form has exactly one byte. Reported `0` means off, `20..100` is the supported on-range, and `1..19` is retained as an unexpected diagnostic.
-- SetUptime: `CA 8B 0A` + uint32 little-endian milliseconds
-- SetUptime Status: `CB 8B 0A`
-- GetUptimeAndBrightness: `CC 8B 0A`
-- GetUptimeAndBrightness Status: `CD 8B 0A`
-
-A six-byte `0x0D` parameter body has been observed as:
-
-- bytes 0..3: uint32 little-endian milliseconds since local midnight
-- bytes 4..5: uint16 little-endian brightness-related raw value
-
-Do not silently relabel the uint16 value as a confirmed percent without further protocol validation.
-
-Bluetooth Mesh configuration PDUs used:
-
-- Config Network Transmit Get: `80 23`
-- Config Network Transmit Status: `80 25 <encoded>`
-- Config Default TTL Set 5: `80 0D 05`
-- Config Default TTL Status: `80 0E <ttl>`
-- Config Model App Bind: `80 3D` + little-endian element/AppKey/company/model fields
-
-## BlueZ setup workflow
-
-1. Register local D-Bus application objects for control and sender.
-2. Import or attach control App-ID 1.
-3. Import primary NetKey and AppKey into control `Management1`.
-4. Import or attach canonical sender App-ID 2.
-5. Import the sender DeviceKey as a remote node into control `Management1`.
-6. Add AppKey 0 to the sender when needed.
-7. Bind AppKey 0 to vendor model `0x0A8B/0x0001`.
-8. Set and confirm sender Default TTL 5.
-9. Persist local BlueZ tokens without displaying them.
-
-The binding callback is gated by remote DeviceKey readiness so that an asynchronous `UpdateModelConfiguration` signal cannot trigger a DevKey TTL message too early.
-
-## Setup transaction ordering
-
-`scripts/install-gateway.sh` is the single public installer. It must preserve this order:
-
-  1. locate and protect the private CDB and configuration directory;
-  2. validate the CDB without printing secrets;
-  3. install all BlueZ, Python and Paho MQTT packages in one package phase;
-  4. run compile, unit and source-security tests;
-  5. validate the Raspberry Pi / BlueZ environment;
-  6. stop the MQTT gateway and `sanlight-meshd-generic.service`;
-  7. reconcile both identities against exact CDB-derived BlueZ UUID paths;
-  8. install/start the Mesh service and attach or import identities;
-  9. create or reuse protected MQTT configuration;
-  10. install/start the MQTT service and run read-only diagnostics.
-
-`setup-all.sh` remains the lower-level Mesh helper used by the public installer. `--reset-mesh-state` stays explicit and occurs only after CDB preflight and tests. Never reintroduce an unconditional reset or a separate normal "Mesh first, MQTT optional" installation path.
+A SANlight lamp node is detected only when node `cid` is `0A8B` and an element
+contains vendor model `0A8B0001`.
 
 ## Identity-state adoption invariants
 
-The validated BlueZ 5.82 host stores one `/var/lib/bluetooth/mesh/<provisioner-uuid>/node.json` per imported local identity. The top-level object includes `token`, `IVindex`, `sequenceNumber`, `deviceKey` and `unicastAddress`; optional fields can differ between identities. In the observed installation the canonical sender contained `appKeys` while the control identity did not. That difference is not corruption.
+BlueZ 5.82 stores one
+`/var/lib/bluetooth/mesh/<provisioner-uuid-without-hyphens>/node.json` per local
+identity. Relevant top-level values include `token`, `IVindex`,
+`sequenceNumber`, `deviceKey` and `unicastAddress`. Optional fields can differ;
+the observed sender had `appKeys` while control did not. This is not corruption.
 
-Identity recovery rules:
+Recovery rules:
 
-  * derive the directory exclusively from the expected CDB provisioner UUID;
-  * require a private regular non-symlink file owned by root;
-  * validate DeviceKey and unicast address against the CDB without printing either key;
-  * validate the token as uint64 hexadecimal and IV Index as uint32;
-  * require explicit/CDB/project/BlueZ IV Index values to agree;
-  * reconstruct only the normal protected project token-state file through `write_state()`;
-  * never identify a node by `appKeys`, list shape, filesystem ordering or another heuristic;
-  * never alter `sequenceNumber` during state adoption;
-  * project state present plus BlueZ state absent is a hard error, not permission to re-import;
-  * `node.json.bak` without `node.json` is a manual-recovery condition;
-  * all errors must remain redacted.
+- derive paths only from expected CDB provisioner UUIDs;
+- require private regular non-symlink root-owned files;
+- validate DeviceKey and unicast without printing private values;
+- validate token as uint64 hex and IV Index as uint32;
+- require CDB/explicit/project/BlueZ IV values to agree;
+- reconstruct only normal protected project token state;
+- never identify an identity by `appKeys`, list shape or filesystem ordering;
+- never alter `sequenceNumber` during adoption;
+- project state present plus BlueZ state absent is a hard error;
+- `node.json.bak` without `node.json` requires manual recovery;
+- errors remain redacted.
 
-The normal state matrix is: both present = validate; project missing/BlueZ present = recover; both missing = fresh import; project present/BlueZ missing = abort. This classification is performed independently for control App-ID 1 and canonical sender App-ID 2.
+State matrix, independently per identity:
 
-## Service lessons
+| Project state | BlueZ state | Result |
+|---|---|---|
+| present | present | validate and attach |
+| missing | present | validate, reconstruct state, attach |
+| missing | missing | permit fresh import |
+| present | missing | abort |
+| mismatch | any | abort |
 
-A clean trixie image exposed a real failure because an earlier unit used `/usr/bin/rfkill`. Debian installs `rfkill` outside that path. The revised launcher:
+## SANlight protocol and command safety
 
-- installs the `rfkill` package;
-- uses a complete service `PATH` and `command -v rfkill`;
-- treats unblock failure as non-fatal but verifies `hci0`;
-- discovers `bluetooth-meshd` from known Debian locations;
-- exits with a concise error before launching if prerequisites are missing.
+Company ID is `0x0A8B`, encoded little-endian as `8B 0A` after a vendor opcode.
 
-The installer starts the service asynchronously and polls the actual `org.bluez.mesh.Network1` interface with `busctl introspect org.bluez.mesh /org/bluez/mesh org.bluez.mesh.Network1` for up to 25 seconds. Do not pass an object path to `busctl tree`; `tree` accepts service names there and caused a false timeout on a clean trixie installation even though BlueZ had already logged `Added Network Interface on /org/bluez/mesh`. Failure prints status and recent journal lines.
+Validated access PDUs:
+
+- SetMaxBrightness: `C6 8B 0A <percent>`;
+- status: `C7 8B 0A`;
+- GetMaxBrightness: `C8 8B 0A`;
+- status: `C9 8B 0A <percent>`;
+- SetUptime: `CA 8B 0A` + uint32 little-endian milliseconds;
+- status: `CB 8B 0A`;
+- GetUptimeAndBrightness: `CC 8B 0A`;
+- status: `CD 8B 0A` plus observed uptime/brightness-related fields.
+
+Do not relabel the partially understood uint16 brightness-related raw value as a
+confirmed percentage.
+
+Safety invariants:
+
+- ordinary `set-max` accepts integer `20..100` only;
+- `0`, `1..19`, negatives, values above 100 and `0xFFFF` are rejected before
+  D-Bus and again in the PDU builder;
+- destination must exist in the CDB;
+- unicast `set-max` may retry the exact idempotent write once after a lost ack;
+- matching source/AppKey/destination is required for an ack;
+- readback is authoritative and may retry once;
+- readback failure never triggers additional writes;
+- group writes are transmitted once and never claimed as group-wide verified;
+- explicit 0% uses only confirmed blackout workflow with pre-read, private
+  snapshot and per-node verification;
+- setup never calls write commands.
+
+## Sequence continuity and replay recovery
+
+Bluetooth Mesh Sequence Number is 24-bit (`0..0xFFFFFF`); IV Index is 32-bit and
+network-wide. Sequence must never wrap under the same IV Index. The project does
+not initiate IV Update because SANlight network-wide behaviour is not validated.
+
+Project policy:
+
+- setup never changes sequence automatically;
+- use `scripts/diagnose-replay.sh NODE_ADDRESS` before recovery;
+- retry both identities before classifying a timeout;
+- `recover-sequence` is explicit, root-only, forward-only, backed up and atomic;
+- never edit BlueZ state while `bluetooth-meshd` runs;
+- never claim a lamp power cycle clears replay state;
+- do not manually increment IV Index as a shortcut;
+- only one active gateway may own a sender identity/sequence state.
+
+Every outgoing application/config message consumes sequence space. Routine
+MaxBrightness automation should normally update no faster than once per minute.
+The persistent ten-second write guard is an emergency brake, not a recommended
+cadence. Read-only polling also consumes sequence values.
+
+## MQTT transport invariants
+
+The gateway uses MQTT 5 and:
+
+- subscribes with `retainAsPublished=true`;
+- uses `retainHandling=DO_NOT_SEND` for command subscriptions;
+- rejects live retained commands before decoding;
+- uses clean sessions so offline commands are not queued;
+- requires command ID, creation time and TTL;
+- deduplicates QoS 1 redelivery across restart;
+- persists in-flight state before execution;
+- coalesces pending same-node setpoints;
+- updates retained node state only after verified results;
+- never accepts executable paths, arbitrary CLI options or local file paths from
+  MQTT payloads;
+- never publishes CDB/DeviceKey/BlueZ token/password material.
+
+Do not weaken the transport back to MQTT 3.1.1. Retain-flag preservation was a
+real safety issue found during validation.
 
 ## Testing expectations
 
@@ -215,215 +277,18 @@ Before packaging or committing:
 
 ```bash
 ./scripts/run-tests.sh
+bash scripts/install-gateway.sh --help
 ```
 
-Also inspect the archive:
+Also inspect patch/release archives. They must not contain private CDB/state,
+password files, logs, captures, bytecode or real key/token values.
 
-```bash
-unzip -l <archive>.zip
-```
+Unit tests can prove syntax, parsing, policy and filesystem behaviour, but cannot
+prove systemd, HCI ownership, D-Bus timing, RF behaviour, Mosquitto startup or
+end-to-end ioBroker operation. Hardware claims require the target Raspberry Pi.
 
-The archive must not contain:
-
-- `SANlightMesh.json`
-- `.state/`
-- state JSON files
-- logs or packet captures
-- `__pycache__`
-- real keys or token values
-
-Hardware claims require a Raspberry Pi test. Container/unit tests can validate syntax, CLI behavior, CDB parsing, bytes, MQTT payload policy and filesystem safety, but cannot prove D-Bus timing, HCI ownership, RF reception, broker reconnection or systemd recovery.
-
-The merged MQTT implementation completed 97 offline tests on the target Linux host during the 2026-07-15 hardware run. Treat the current test suite, not the historical count, as authoritative.
-
-## Sequence continuity and replay recovery
-
-Bluetooth Mesh Sequence Number is 24-bit (`0..0xFFFFFF`), while IV Index is 32-bit and network-wide. Sequence Number must never wrap to zero under the same IV Index. A proper IV Update advances IV Index and permits sequence counters to restart; this project does not yet initiate IV Update because the SANlight network-wide behavior has not been validated.
-
-A clean SD-card test proved a real migration failure: control App-ID 1 at `0x2400` could exchange DeviceKey Config messages with lamp `0x0002`, while canonical sender App-ID 2 at `0x2800` received no reply over either DeviceKey or AppKey. Advancing only the stopped BlueZ sender `sequenceNumber` from a fresh low value to `0x100000` restored both `get-net-tx-sender` and SANlight `get-live`. This confirms persistent receiver Replay Protection List state for the reused source address.
-
-Project rules:
-
-- setup must not alter Sequence Number automatically;
-- use `scripts/diagnose-replay.sh NODE_ADDRESS` for the read-only two-identity probe;
-- each diagnostic identity must be retried before classification; a clean-image
-  test produced one transient canonical-sender timeout immediately followed by a
-  successful standalone probe, so one missing Config Status is not sufficient
-  evidence of replay protection;
-- use `show-sender-state` for live non-secret Node1 IV/sequence properties;
-- `recover-sequence` is explicit, root-only, forward-only, backed up, atomic, and requires `--confirm-replay-recovery`;
-- recovery targets are valid only in `1..0xBFFFFF`; protocol maximum remains `0xFFFFFF`;
-- never edit BlueZ `node.json` while `bluetooth-meshd` is running;
-- never claim that a lamp power cycle clears replay state;
-- a remembered `0xFFFFFF` cannot be outrun; stop the source, then use coordinated IV Update or a complete Mesh/CDB rebuild;
-- the destructive fallback is SANlight dimmer factory reset plus complete Mesh/CDB rebuild;
-- do not implement manual IV Index increments as a shortcut. IV Update is a coordinated network procedure.
-
-The receiver's exact RPL threshold is not exposed by standard Config Models or ordinary advertisements. A key-assisted packet capture can reveal a transmitted Network PDU's sequence, not a lamp's internal stored threshold.
-
-## MaxBrightness write/readback and blackout invariants
-
-Hardware validation on both lamp nodes confirmed:
-
-- `get-max` (`C8 8B 0A`) returns a strict `C9 8B 0A <PERCENT>` status;
-- `set-max 0003 48` returned `0x07`, then `get-max` read back `48`;
-- restoring `68` returned `0x07`, then `get-max` read back `68`;
-- a missing `0x07` can occur even when the lamp applied the value, so readback is authoritative;
-- one read-only query required its second bounded attempt during validation, confirming that a single missing status must not be overinterpreted.
-
-Safety rules:
-
-- ordinary `set-max` remains strictly `20..100`; never weaken it to accept zero;
-- `get-max` must decode `0..100`, because `0` is a legitimate reported off state;
-- explicit 0% output uses only `blackout ... --confirm-blackout`;
-- blackout must pre-read every selected unicast node, snapshot only nodes that will actually change, send 0 only to those nodes, and verify `get-max = 0`;
-- an all-already-off blackout is a no-op and must not create a zero-value snapshot that shadows a useful restore point;
-- blackout never uses a group destination internally, because one group response cannot verify every lamp;
-- completed GetMax transactions must invalidate their timeout/retry generation before a write phase begins; stale preflight timers must never overlap brightness writes;
-- restore validates Mesh/sender identity and CDB membership, skips already matching nodes, verifies every write, and marks the snapshot completed only after full success;
-- `restore-blackout latest` selects the newest active snapshot that contains no legacy zero-value entries, so repeated restores unwind overlapping blackout operations in reverse order; ambiguous v8 snapshots remain available only by exact path;
-- Q-Series Gen2 has a 20% minimum; 0% support must be confirmed by the operator for EVO/EVO COMPACT/STIXX hardware;
-- 0% is commanded light output off, not electrical mains isolation.
-
-
-Hardware validation of the first blackout implementation exposed two bugs that are now regression requirements:
-
-- a completed preflight timeout could fire after the 0% write started, causing an overlapping stale GetMax retry and an ignored valid `0x09 = 0` response;
-- creating snapshots for already-off nodes made `latest` point at a no-op 0% snapshot instead of the useful earlier restore point.
-
-The runtime now uses generation invalidation between phases, snapshots only changed nodes, creates no snapshot for an all-off no-op, and treats completed snapshots as an undo stack.
-
-## Outgoing traffic and sequence budget
-
-Every new outgoing access/config message consumes one value from the sender's 24-bit Sequence Number space. Read-only queries consume sequence values too. A verified unicast `set-max` normally uses two messages (write + readback) and can use four when both bounded retries occur. At one verified command per second, the full space lasts only about 49..97 days from zero; a 90-day run can therefore exhaust it.
-
-Project control policy:
-
-- use event-driven updates and do not send unchanged values repeatedly;
-- routine MaxBrightness automation should normally update once per minute or slower;
-- never poll `get-max` or `get-live` every second;
-- enforce a persistent 10-second minimum between separate brightness-write commands;
-- `--allow-fast-control` is an explicit diagnostic override, not a normal control option;
-- the guard is only a last-resort bug brake. It does not make 10-second automation the recommended cadence;
-- the lamp-side profile remains responsible for smooth daily changes. Pi-side MaxBrightness is a coarse, infrequent limit.
-
-
-## Remaining sensible milestones
-
-The clean-image CLI path and the MQTT gateway are both hardware validated. Remaining milestones should preserve the current safety boundaries:
-
-1. add machine-readable CLI output only where it provides value beyond MQTT v1, without changing default human output;
-2. add read-only time-drift monitoring before any opt-in automatic clock synchronization;
-3. add optional TLS deployment guidance and broader broker interoperability tests;
-4. evolve the separate native ioBroker adapter while keeping MQTT API v1 as the only runtime contract;
-5. investigate coordinated Bluetooth Mesh IV Update separately; never approximate it by manually incrementing IV Index.
-
-Automatic clock or brightness changes must remain explicit opt-in runtime behavior and must never become part of installation.
-
-## MQTT gateway merged implementation
-
-The gateway was developed on `feature/mqtt-gateway`, hardware validated, merged into `main`, and the temporary branch was deleted. Installed systems must track `main`; documentation must not instruct users to recreate the historical feature branch.
-
-The MQTT API is versioned independently under topic root `sanlightmesh/v1/<gateway-id>`.
-
-Implemented gateway boundary:
-
-- `sanlight_mqtt_gateway.py`: stable service entrypoint;
-- `gateway_config.py`: strict mode-0600 TOML config;
-- `gateway_protocol.py`: command validation, TTL and result envelope;
-- `gateway_queue.py`: bounded serialization and same-node setpoint coalescing;
-- `gateway_store.py`: atomic non-secret dedup, in-flight marker and verified-state cache;
-- `gateway_executor.py`: typed, no-shell bridge to the validated CLI engine;
-- `mqtt_transport.py`: Paho MQTT 5 connection, Last Will and retained state publishing;
-- `gateway_service.py`: orchestration, no-op suppression, expiry and state publishing.
-
-The MQTT service must never receive or publish CDB keys, DeviceKeys, BlueZ tokens, MQTT passwords, local file paths from clients, or arbitrary CLI options. It subscribes with `retainAsPublished=true` so live retained publications remain detectable, and `retainHandling=DO_NOT_SEND` so retained commands stored while offline are not delivered on reconnect. Retained commands are rejected before payload decoding. Only verified values update retained node state.
-
-The implementation intentionally keeps `bluetooth-meshd` persistent while using isolated CLI child transactions. This preserves the existing runtime lock, retry, readback and replay-protection behavior. A later in-process executor may replace this without changing MQTT API v1.
-
-A real retained-command ambiguity was found with MQTT 3.1.1: a broker may forward a live retained publication without preserving the retain flag visible to the subscriber. The required merged fix is MQTT 5 with `retainAsPublished=true` plus `retainHandling=DO_NOT_SEND`; do not weaken this back to MQTT 3.1.1 merely because ordinary commands appear to work.
-
-The gateway tests and state-permission checks are Linux/POSIX-specific. Running the full suite directly on native Windows can fail on unavailable `fcntl`, path escaping, permission bits and filesystem-sync semantics. Those failures do not replace the authoritative Linux target-host test.
-
-The systemd unit sets `PYTHONUNBUFFERED=1`; target-host validation confirmed immediate MQTT connection and command-completion messages in the journal. Before this setting was added, older buffered messages appeared together only when the process stopped.
-
-### Completed hardware validation, 2026-07-15
-
-Validated on the real two-node SANlight installation with Mosquitto 2.0.11, separate ACL-limited gateway/ioBroker users, MQTT API v1 and gateway service version `0.1.1`:
-
-- gateway startup published retained availability, gateway info, node metadata and verified node state;
-- read-only refresh and verified `set-max`/restore worked end to end;
-- ordinary `set-max 0` was rejected;
-- live retained commands were rejected and offline retained commands were not delivered after reconnect;
-- duplicate IDs returned stored results without another Mesh transaction, including after gateway restart;
-- expired commands and a rate-guard-blocked command reported `meshMessagesSent: 0`;
-- rapid same-node setpoints were coalesced and older requests became `superseded`;
-- explicit blackout produced verified 0%, physical light off, and `restore-blackout latest` restored the prior value;
-- SIGKILL Last Will, automatic service restart, Mosquitto restart and full lamp-side Raspberry Pi reboot recovered correctly;
-- generic ioBroker MQTT adapter subscription received availability, gateway info and verified node JSON strings;
-- ioBroker JavaScript publication successfully performed refresh, set and restore;
-- both lamps were restored to the installation's original 68% MaxBrightness after testing;
-- sender sequence status remained `ok` with 93.75% of the 24-bit space remaining at the end of the documented run.
-
-The addresses, node names, local IP addresses and 68% value belong to that installation and are not generic defaults.
-
-### Broker deployment findings
-
-- The validated broker was Mosquitto 2.0.11 with anonymous access disabled and separate ACL-limited users for the gateway and ioBroker.
-- Mosquitto parses its main configuration and included fragments as one configuration. Defining `persistence_location` in more than one loaded file caused startup failure; keep global persistence settings in exactly one place.
-- Binding a listener to a specific interface address reduces exposure but couples broker startup to that address and interface. Use a stable address/reservation and account for interface availability.
-- The documented run used plain MQTT on a trusted LAN. The gateway supports TLS configuration, but TLS certificate deployment and interoperability were not part of that hardware validation.
-
-### ioBroker boundary
-
-The validated generic ioBroker integration creates objects below `mqtt.0.sanlightmesh.v1.<gateway-id>`. JSON payloads are stored as strings, and one object remains for each observed result topic. This is expected generic-adapter behavior, not a gateway defect. The tested adapter configuration disabled automatic own-state publication, publish-on-connect, retained publication and persistent sessions; commands were sent explicitly with `sendMessage2Client`.
-
-The native ioBroker adapter lives in the separate `Nibbels/ioBroker.sanlightmesh` repository and depends only on MQTT API v1. Do not move it into this Python repository or duplicate BlueZ logic there.
-
-## Productization decision, 2026-07
-
-The repository was renamed from `sanlight-mesh-bluez-poc` to `sanlight-mesh-mqtt-gateway`. The current GitHub repository is:
-
-```text
-https://github.com/Nibbels/sanlight-mesh-mqtt-gateway
-```
-
-A separate repository now owns the native ioBroker integration:
-
-```text
-https://github.com/Nibbels/ioBroker.sanlightmesh
-```
-
-Repository boundary:
-
-- this Python repository owns BlueZ Mesh, SANlight protocol handling, sequence continuity, replay recovery, local secrets, MQTT API v1, gateway installation and diagnostics;
-- `ioBroker.sanlightmesh` owns MQTT connectivity from ioBroker, Admin configuration, typed objects, command/result correlation and user-facing automation states;
-- the ioBroker adapter must never use SSH, import the CDB, receive Mesh keys or duplicate BlueZ logic;
-- MQTT API v1 is the only runtime contract between the repositories.
-
-Deployment and isolation rules:
-
-- gateway, broker and ioBroker may run on one host or on separate hosts;
-- one ioBroker adapter instance manages exactly one configured `gateway.id`;
-- separate grow rooms or facilities should use separate gateway IDs and preferably ACL-scoped MQTT users;
-- adapter subscriptions must use the exact configured gateway ID, never a wildcard across every gateway;
-- only one active gateway may use a given Bluetooth Mesh sender address and sequence state.
-
-Maintenance strategy:
-
-- do not introduce Debian packaging until real user demand justifies the support burden;
-- prefer tagged source/release archives, SHA-256 checksums and an idempotent shell installer;
-- keep system dependencies from Debian/Raspberry Pi OS repositories where possible;
-- keep the validated CLI engine as the diagnostic and transaction core;
-- normal users should interact with the systemd service, management helper and ioBroker adapter rather than assembling CLI calls;
-- installation must remain read-only toward lamp brightness and time.
-
-New productization helpers:
-
-- `scripts/install-gateway.sh` interactively creates the protected MQTT configuration and delegates to the validated service installer;
-- `scripts/sanlight-gateway` provides status, read-only doctor checks, logs, restart and redacted diagnostics;
-- `scripts/release-archive.sh` builds a secret-free release archive and SHA-256 file;
-- `docs/ARCHITECTURE.md`, `docs/INSTALLER.md`, `docs/RELEASES.md`, `docs/CHATGPT_SUPPORT.md` and `SECURITY.md` define the product boundary.
-
-These new helpers are code-reviewed and syntax-tested but are not hardware-validated merely because the underlying gateway is hardware-validated. Perform a fresh target-host install/upgrade test before describing the installer as broadly validated.
-
+The previous external-broker runtime was hardware validated on 2026-07-15 with
+Mosquitto 2.0.11, two real lamps, retained-command safety, QoS 1 deduplication,
+TTL expiry, coalescing, rate limiting, blackout/restore, broker/gateway restart
+and full Pi reboot. The unified local-broker installer is a new productization
+change and must be target-host validated before its status is upgraded.

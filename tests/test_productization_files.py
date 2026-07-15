@@ -39,7 +39,10 @@ class ProductizationFilesTest(unittest.TestCase):
         self.assertGreaterEqual(len(schemas), 5)
         for path in schemas:
             document = json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual(document["$schema"], "https://json-schema.org/draft/2020-12/schema")
+            self.assertEqual(
+                document["$schema"],
+                "https://json-schema.org/draft/2020-12/schema",
+            )
             self.assertIn("Nibbels/sanlight-mesh-mqtt-gateway", document["$id"])
             self.assertNotIn("sanlight-mesh-bluez-poc", document["$id"])
 
@@ -51,6 +54,15 @@ class ProductizationFilesTest(unittest.TestCase):
         self.assertNotIn("--reset-mesh-state", installer)
         self.assertIn("--check", installer)
         self.assertIn("temporary.replace(path)", installer)
+        self.assertIn('mqtt_host="127.0.0.1"', installer)
+        self.assertIn("allow_anonymous false", installer)
+        self.assertNotIn('prompt "MQTT broker host', installer)
+
+    def test_no_split_host_broker_installer_is_documented(self) -> None:
+        candidates = [*ROOT.glob("*.md"), *ROOT.glob("docs/*.md")]
+        combined = "\n".join(path.read_text(encoding="utf-8") for path in candidates)
+        self.assertNotIn("install-mosquitto-broker.sh", combined)
+        self.assertNotIn("## External MQTT broker prerequisite", combined)
 
     def test_management_restart_preserves_arguments(self) -> None:
         helper = (ROOT / "scripts/sanlight-gateway").read_text(encoding="utf-8")
@@ -58,16 +70,33 @@ class ProductizationFilesTest(unittest.TestCase):
         self.assertIn('exec sudo -- "$0" "${args[@]}" restart', helper)
         self.assertNotIn('${CONFIG_PATH:+--config "$CONFIG_PATH"}', helper)
 
+    def test_management_and_service_include_local_broker(self) -> None:
+        helper = (ROOT / "scripts/sanlight-gateway").read_text(encoding="utf-8")
+        unit = (ROOT / "systemd/sanlight-mqtt-gateway.service.example").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('BROKER_SERVICE="mosquitto.service"', helper)
+        self.assertIn('systemctl is-active --quiet "$BROKER_SERVICE"', helper)
+        self.assertIn('local MQTT broker listening on TCP ${BROKER_PORT}', helper)
+        self.assertIn("Requires=mosquitto.service sanlight-meshd-generic.service", unit)
+        self.assertIn("After=network-online.target mosquitto.service", unit)
+
     def test_release_archive_excludes_runtime_material(self) -> None:
         release = (ROOT / "scripts/release-archive.sh").read_text(encoding="utf-8")
         self.assertIn("':(exclude)private'", release)
         self.assertIn("SANlightMesh", release)
         self.assertIn("mqtt-password", release)
+        self.assertIn("iobroker-mqtt-password", release)
+        self.assertIn("sanlight-mesh-mqtt-gateway", release)
         self.assertIn("sanlight-gateway-diagnostics", release)
 
     def test_private_material_not_bundled(self) -> None:
-        forbidden_names = {"SANlightMesh.json", "mqtt-password.txt"}
-
+        forbidden_names = {
+            "SANlightMesh.json",
+            "mqtt-password.txt",
+            "iobroker-mqtt-password.txt",
+            "sanlight-mesh-mqtt-gateway.passwd",
+        }
         try:
             completed = subprocess.run(
                 ["git", "-C", str(ROOT), "ls-files", "-z"],
@@ -79,20 +108,19 @@ class ProductizationFilesTest(unittest.TestCase):
             completed = None
 
         if completed is not None and completed.returncode == 0:
-            paths = (
-                Path(value)
-                for value in completed.stdout.split("\0")
-                if value
-            )
+            paths = (Path(value) for value in completed.stdout.split("\0") if value)
         else:
             # A release archive has no .git metadata. Runtime-private paths are
-            # intentionally populated after extraction and are checked instead
-            # by release-archive exclusions and file-permission tests.
+            # populated only after extraction and are covered by the release
+            # exclusions and file-permission tests.
             paths = (
                 path.relative_to(ROOT)
                 for path in ROOT.rglob("*")
                 if path.is_file()
-                and not ({".git", "private", ".state"} & set(path.relative_to(ROOT).parts))
+                and not (
+                    {".git", "private", ".state"}
+                    & set(path.relative_to(ROOT).parts)
+                )
             )
 
         for path in paths:

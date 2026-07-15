@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+
 set -euo pipefail
 
 VERSION="${1:-}"
@@ -13,7 +14,6 @@ cd "$REPO_DIR"
 
 command -v git >/dev/null || { echo "ERROR: git is required" >&2; exit 1; }
 command -v sha256sum >/dev/null || { echo "ERROR: sha256sum is required" >&2; exit 1; }
-
 [[ -d .git ]] || { echo "ERROR: run from a Git checkout" >&2; exit 1; }
 [[ -z "$(git status --short)" ]] || {
     echo "ERROR: worktree is not clean; commit or stash changes first" >&2
@@ -29,9 +29,11 @@ git archive \
     --format=tar.gz \
     --prefix="${name}/" \
     --output="$archive" \
-    HEAD -- . ':(exclude)private' ':(exclude)dist' 
+    HEAD -- . \
+    ':(exclude)private' \
+    ':(exclude)dist'
 
-forbidden='(^|/)(private/|\.state/|SANlightMesh\.json$|.*\.(log|pcap|pcapng)$|mqtt-password\.txt$|sanlight-gateway-diagnostics-.*\.txt$|__pycache__/)' 
+forbidden='(^|/)(private/|\.state/|SANlightMesh\.json$|.*\.(log|pcap|pcapng)$|mqtt-password\.txt$|iobroker-mqtt-password\.txt$|sanlight-mesh-mqtt-gateway\.passwd$|sanlight-gateway-diagnostics-.*\.txt$|__pycache__/)'
 if tar -tzf "$archive" | grep -E "$forbidden"; then
     echo "ERROR: release archive contains forbidden private/runtime files" >&2
     rm -f "$archive"

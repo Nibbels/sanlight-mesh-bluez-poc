@@ -1,26 +1,30 @@
 #!/usr/bin/env bash
+
 set -euo pipefail
 umask 077
 
 SERVICE="sanlight-mqtt-gateway.service"
 MESH_SERVICE="sanlight-meshd-generic.service"
+BROKER_SERVICE="mosquitto.service"
+BROKER_CONFIG="/etc/mosquitto/conf.d/sanlight-mesh-mqtt-gateway.conf"
+BROKER_PORT=1883
 CONFIG_PATH=""
 
 usage() {
-    cat <<'EOF'
+    cat <<'USAGE'
 Usage: sanlight-gateway [--config PATH] COMMAND [arguments]
 
 Commands:
-  status                         Show service state
-  doctor                         Run read-only health checks
-  logs [LINES]                   Show recent gateway journal (default: 100)
-  restart                        Restart the MQTT gateway service
-  check-config                   Validate configuration without starting the service
-  collect-diagnostics [FILE]     Write a redacted text report
-  help                           Show this help
+  status                     Show broker, Mesh and gateway service state
+  doctor                     Run read-only health checks
+  logs [LINES]               Show recent gateway journal (default: 100)
+  restart                    Restart the MQTT gateway service
+  check-config               Validate configuration without starting the service
+  collect-diagnostics [FILE] Write a redacted text report
+  help                       Show this help
 
 The doctor and diagnostics commands never send Mesh write commands.
-EOF
+USAGE
 }
 
 while [[ $# -gt 0 ]]; do
@@ -31,7 +35,10 @@ while [[ $# -gt 0 ]]; do
             CONFIG_PATH="$1"
             shift
             ;;
-        -h|--help) usage; exit 0 ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
         *) break ;;
     esac
 done
@@ -42,7 +49,6 @@ COMMAND="${1:-help}"
 SCRIPT_PATH="$(realpath -m "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 REPO_DIR=""
-
 if [[ -f "$SCRIPT_DIR/../sanlight_mqtt_gateway.py" ]]; then
     REPO_DIR="$(realpath "$SCRIPT_DIR/..")"
 elif [[ -r /etc/sanlight-mesh-mqtt-gateway/repository-path ]]; then
@@ -71,11 +77,13 @@ find_repo_from_config() {
     local candidate
     candidate="$(/usr/bin/python3 - "$CONFIG_PATH" <<'PY' 2>/dev/null || true
 from pathlib import Path
-import sys, tomllib
-p = Path(sys.argv[1])
+import sys
+import tomllib
+
+path = Path(sys.argv[1])
 try:
-    data = tomllib.loads(p.read_text(encoding='utf-8'))
-    print(data.get('gateway', {}).get('project_root', ''))
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    print(data.get("gateway", {}).get("project_root", ""))
 except Exception:
     pass
 PY
@@ -97,26 +105,31 @@ check_config() {
         echo "ERROR: gateway repository/release directory was not found" >&2
         return 1
     }
-    /usr/bin/python3 "$REPO_DIR/sanlight_mqtt_gateway.py" --config "$CONFIG_PATH" --check
+    /usr/bin/python3 "$REPO_DIR/sanlight_mqtt_gateway.py" \
+        --config "$CONFIG_PATH" \
+        --check
+}
+
+service_summary() {
+    local service="$1" label="$2"
+    echo "$label:"
+    systemctl is-enabled "$service" 2>/dev/null || true
+    systemctl is-active "$service" 2>/dev/null || true
+    echo
 }
 
 status_command() {
-    echo "MESH SERVICE:"
-    systemctl is-enabled "$MESH_SERVICE" 2>/dev/null || true
-    systemctl is-active "$MESH_SERVICE" 2>/dev/null || true
-    echo
-    echo "MQTT GATEWAY SERVICE:"
-    systemctl is-enabled "$SERVICE" 2>/dev/null || true
-    systemctl is-active "$SERVICE" 2>/dev/null || true
-    echo
+    service_summary "$BROKER_SERVICE" "LOCAL MQTT BROKER"
+    service_summary "$MESH_SERVICE" "MESH SERVICE"
+    service_summary "$SERVICE" "MQTT GATEWAY SERVICE"
     SYSTEMD_PAGER=cat systemctl status "$SERVICE" --no-pager --full || true
 }
 
 doctor_command() {
     local failures=0
-    pass() { printf 'PASS  %s\n' "$1"; }
-    fail() { printf 'FAIL  %s\n' "$1"; failures=$((failures + 1)); }
-    warn() { printf 'WARN  %s\n' "$1"; }
+    pass() { printf 'PASS %s\n' "$1"; }
+    fail() { printf 'FAIL %s\n' "$1"; failures=$((failures + 1)); }
+    warn() { printf 'WARN %s\n' "$1"; }
 
     echo "SANlight gateway read-only doctor"
     echo "================================="
@@ -124,11 +137,35 @@ doctor_command() {
     command -v python3 >/dev/null 2>&1 && pass "python3 available" || fail "python3 missing"
     command -v systemctl >/dev/null 2>&1 && pass "systemctl available" || fail "systemctl missing"
     command -v busctl >/dev/null 2>&1 && pass "busctl available" || fail "busctl missing"
+    command -v ss >/dev/null 2>&1 && pass "ss available" || fail "ss missing"
 
-    systemctl is-active --quiet "$MESH_SERVICE" && pass "$MESH_SERVICE active" || fail "$MESH_SERVICE inactive"
-    systemctl is-active --quiet "$SERVICE" && pass "$SERVICE active" || fail "$SERVICE inactive"
+    systemctl is-active --quiet "$BROKER_SERVICE" \
+        && pass "$BROKER_SERVICE active" \
+        || fail "$BROKER_SERVICE inactive"
+    systemctl is-active --quiet "$MESH_SERVICE" \
+        && pass "$MESH_SERVICE active" \
+        || fail "$MESH_SERVICE inactive"
+    systemctl is-active --quiet "$SERVICE" \
+        && pass "$SERVICE active" \
+        || fail "$SERVICE inactive"
 
-    if busctl introspect org.bluez.mesh /org/bluez/mesh org.bluez.mesh.Network1 >/dev/null 2>&1; then
+    if ss -ltn 2>/dev/null | grep -Eq "[.:]${BROKER_PORT}[[:space:]]"; then
+        pass "local MQTT broker listening on TCP ${BROKER_PORT}"
+    else
+        fail "no local MQTT listener on TCP ${BROKER_PORT}"
+    fi
+
+    if [[ -f "$BROKER_CONFIG" ]]; then
+        broker_mode="$(stat -c '%a' "$BROKER_CONFIG" 2>/dev/null || echo unknown)"
+        [[ "$broker_mode" == 644 ]] \
+            && pass "managed Mosquitto config mode 644" \
+            || fail "managed Mosquitto config mode is $broker_mode, expected 644"
+    else
+        fail "managed Mosquitto config not found"
+    fi
+
+    if busctl introspect org.bluez.mesh /org/bluez/mesh org.bluez.mesh.Network1 \
+        >/dev/null 2>&1; then
         pass "BlueZ Mesh Network1 D-Bus interface available"
     else
         fail "BlueZ Mesh Network1 D-Bus interface unavailable"
@@ -136,7 +173,9 @@ doctor_command() {
 
     if [[ -n "$CONFIG_PATH" && -f "$CONFIG_PATH" ]]; then
         mode="$(stat -c '%a' "$CONFIG_PATH" 2>/dev/null || echo unknown)"
-        [[ "$mode" == 600 ]] && pass "gateway config mode 600" || fail "gateway config mode is $mode, expected 600"
+        [[ "$mode" == 600 ]] \
+            && pass "gateway config mode 600" \
+            || fail "gateway config mode is $mode, expected 600"
     else
         fail "gateway config not found"
     fi
@@ -150,8 +189,12 @@ doctor_command() {
     if [[ -n "$REPO_DIR" && -d "$REPO_DIR/.git" ]]; then
         branch="$(git -C "$REPO_DIR" branch --show-current 2>/dev/null || true)"
         dirty="$(git -C "$REPO_DIR" status --short 2>/dev/null || true)"
-        [[ "$branch" == main ]] && pass "repository branch main" || warn "repository branch is ${branch:-unknown}"
-        [[ -z "$dirty" ]] && pass "repository worktree clean" || warn "repository worktree has local changes"
+        [[ "$branch" == main ]] \
+            && pass "repository branch main" \
+            || warn "repository branch is ${branch:-unknown}"
+        [[ -z "$dirty" ]] \
+            && pass "repository worktree clean" \
+            || warn "repository worktree has local changes"
     else
         warn "release is not a Git checkout; Git checks skipped"
     fi
@@ -167,7 +210,9 @@ doctor_command() {
 
 redact_stream() {
     /usr/bin/python3 -c '
-import re, sys
+import re
+import sys
+
 sensitive = re.compile(r"(?i)(password|netkey|appkey|devicekey|joincomplete|attach token|private key)")
 long_hex = re.compile(r"(?i)\\b[0-9a-f]{32,}\\b")
 uri_auth = re.compile(r"(?i)(mqtts?://)[^/@\\s]+@")
@@ -176,8 +221,8 @@ for raw in sys.stdin:
     if sensitive.search(line):
         print("[REDACTED SENSITIVE LINE]")
         continue
-    line = long_hex.sub("<redacted-hex>", line)
-    line = uri_auth.sub(r"\\1<redacted>@", line)
+    line = long_hex.sub("", line)
+    line = uri_auth.sub(r"\\1@", line)
     print(line)
 '
 }
@@ -186,8 +231,11 @@ safe_config_summary() {
     [[ -n "$REPO_DIR" && -n "$CONFIG_PATH" && -f "$CONFIG_PATH" ]] || return 0
     PYTHONPATH="$REPO_DIR" /usr/bin/python3 - "$CONFIG_PATH" <<'PY' 2>&1
 from pathlib import Path
-import json, sys
+import json
+import sys
+
 from sanlight_mesh.gateway_config import load_gateway_config, redacted_config_summary
+
 try:
     config = load_gateway_config(Path(sys.argv[1]))
     print(json.dumps(redacted_config_summary(config), indent=2, sort_keys=True))
@@ -199,6 +247,7 @@ PY
 collect_diagnostics() {
     local output="${1:-sanlight-gateway-diagnostics-$(date --utc +%Y%m%dT%H%M%SZ).txt}"
     output="$(realpath -m "$output")"
+
     {
         echo "SANlight Mesh MQTT Gateway diagnostics"
         echo "Generated: $(date --utc --iso-8601=seconds)"
@@ -212,6 +261,7 @@ collect_diagnostics() {
         echo "== SOFTWARE =="
         python3 --version 2>&1 || true
         bluetooth-meshd --version 2>&1 || true
+        mosquitto -h 2>&1 | head -n 2 || true
         if [[ -n "$REPO_DIR" ]]; then
             echo "Repository/release path: $REPO_DIR"
             git -C "$REPO_DIR" log -1 --oneline 2>&1 || true
@@ -220,36 +270,56 @@ collect_diagnostics() {
         echo
         echo "== CONFIGURATION SUMMARY =="
         echo "Config path: ${CONFIG_PATH:-not found}"
-        [[ -n "$CONFIG_PATH" && -e "$CONFIG_PATH" ]] && stat -c 'Config mode/owner: %a %U:%G' "$CONFIG_PATH" 2>&1 || true
+        [[ -n "$CONFIG_PATH" && -e "$CONFIG_PATH" ]] \
+            && stat -c 'Config mode/owner: %a %U:%G' "$CONFIG_PATH" 2>&1 \
+            || true
         safe_config_summary
         echo
         echo "== SERVICES =="
-        systemctl is-enabled "$MESH_SERVICE" 2>&1 || true
-        systemctl is-active "$MESH_SERVICE" 2>&1 || true
-        systemctl is-enabled "$SERVICE" 2>&1 || true
-        systemctl is-active "$SERVICE" 2>&1 || true
-        systemctl show "$SERVICE" -p ActiveState -p SubState -p Restart -p NRestarts -p ExecMainStatus 2>&1 || true
+        for service in "$BROKER_SERVICE" "$MESH_SERVICE" "$SERVICE"; do
+            echo "-- $service --"
+            systemctl is-enabled "$service" 2>&1 || true
+            systemctl is-active "$service" 2>&1 || true
+            systemctl show "$service" \
+                -p ActiveState -p SubState -p Restart -p NRestarts -p ExecMainStatus \
+                2>&1 || true
+        done
+        echo
+        echo "== LISTENERS =="
+        ss -ltn 2>&1 | grep -E "State|[.:]${BROKER_PORT}[[:space:]]" || true
         echo
         echo "== BLUEZ MESH DBUS =="
-        busctl introspect org.bluez.mesh /org/bluez/mesh org.bluez.mesh.Network1 2>&1 | head -n 80 || true
+        busctl introspect org.bluez.mesh /org/bluez/mesh org.bluez.mesh.Network1 \
+            2>&1 | head -n 80 || true
         echo
         echo "== READ-ONLY DOCTOR =="
         doctor_command 2>&1 || true
         echo
+        echo "== RECENT BROKER JOURNAL =="
+        journalctl -u "$BROKER_SERVICE" -n 100 --no-pager --output=short-iso 2>&1 || true
+        echo
         echo "== RECENT GATEWAY JOURNAL =="
         journalctl -u "$SERVICE" -n 200 --no-pager --output=short-iso 2>&1 || true
     } | redact_stream > "$output"
+
     chmod 0600 "$output"
     echo "Diagnostics written to: $output"
     echo "Review it before sharing. Never attach the CDB, password files or .state/ contents."
 }
 
 case "$COMMAND" in
-    status) status_command ;;
-    doctor) doctor_command ;;
+    status)
+        status_command
+        ;;
+    doctor)
+        doctor_command
+        ;;
     logs)
         lines="${1:-100}"
-        [[ "$lines" =~ ^[0-9]+$ ]] || { echo "ERROR: LINES must be an integer" >&2; exit 2; }
+        [[ "$lines" =~ ^[0-9]+$ ]] || {
+            echo "ERROR: LINES must be an integer" >&2
+            exit 2
+        }
         journalctl -u "$SERVICE" -n "$lines" --no-pager --output=short-iso
         ;;
     restart)
@@ -261,8 +331,18 @@ case "$COMMAND" in
         systemctl restart "$SERVICE"
         systemctl is-active "$SERVICE"
         ;;
-    check-config) check_config ;;
-    collect-diagnostics) collect_diagnostics "${1-}" ;;
-    help) usage ;;
-    *) echo "ERROR: unknown command: $COMMAND" >&2; usage >&2; exit 2 ;;
+    check-config)
+        check_config
+        ;;
+    collect-diagnostics)
+        collect_diagnostics "${1-}"
+        ;;
+    help)
+        usage
+        ;;
+    *)
+        echo "ERROR: unknown command: $COMMAND" >&2
+        usage >&2
+        exit 2
+        ;;
 esac
