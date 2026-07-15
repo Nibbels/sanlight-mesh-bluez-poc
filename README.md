@@ -1,8 +1,12 @@
-![Visual overview of SANlight Bluetooth Mesh control via Raspberry Pi](docs/sanlight_mesh_steuerung_ueber_raspberry_pi.png)
-
 # SANlight Mesh MQTT Gateway
 
 A local, community-built Bluetooth Mesh edge gateway for SANlight EVO dimmers. The gateway runs near the lamps, keeps all Mesh credentials local, and exposes a small versioned MQTT API for ioBroker or another automation system.
+
+## Gateway-to-ioBroker architecture at a glance
+
+![Multiple SANlight Mesh MQTT gateways connected through an MQTT broker to native ioBroker integration](docs/sanlight_mesh_mqtt_iobroker_architecture.png)
+
+*Each physical gateway or grow room remains independently identified and should be assigned to its own ioBroker adapter instance and broker ACL scope.*
 
 The repository contains two operating paths:
 
