@@ -1,6 +1,6 @@
 [Unit]
 Description=SANlight Bluetooth Mesh MQTT edge gateway
-Documentation=https://github.com/Nibbels/sanlight-mesh-bluez-poc/blob/main/docs/MQTT_GATEWAY.md
+Documentation=https://github.com/Nibbels/sanlight-mesh-mqtt-gateway/blob/main/docs/MQTT_GATEWAY.md
 After=network-online.target sanlight-meshd-generic.service
 Wants=network-online.target
 Requires=sanlight-meshd-generic.service

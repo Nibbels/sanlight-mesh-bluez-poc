@@ -9,8 +9,8 @@ This is the minimal installation path for a clean **Raspberry Pi OS Lite 64-bit 
 ```bash
 sudo apt update
 sudo apt install -y git
-git clone https://github.com/Nibbels/sanlight-mesh-bluez-poc.git
-cd sanlight-mesh-bluez-poc
+git clone https://github.com/Nibbels/sanlight-mesh-mqtt-gateway.git
+cd sanlight-mesh-mqtt-gateway
 git switch main
 git pull --ff-only
 ```

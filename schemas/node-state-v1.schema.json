@@ -1,18 +1,46 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/Nibbels/sanlight-mesh-bluez-poc/schemas/node-state-v1.schema.json",
+  "$id": "https://raw.githubusercontent.com/Nibbels/sanlight-mesh-mqtt-gateway/main/schemas/node-state-v1.schema.json",
   "title": "SANlight Mesh verified node state v1",
   "type": "object",
   "additionalProperties": true,
-  "required": ["protocolVersion", "address", "name", "maxBrightness", "off", "verified", "verifiedAt"],
+  "required": [
+    "protocolVersion",
+    "address",
+    "name",
+    "maxBrightness",
+    "off",
+    "verified",
+    "verifiedAt"
+  ],
   "properties": {
-    "protocolVersion": {"const": 1},
-    "address": {"type": "string", "pattern": "^[0-9A-F]{4}$"},
-    "name": {"type": "string"},
-    "maxBrightness": {"type": "integer", "minimum": 0, "maximum": 100},
-    "off": {"type": "boolean"},
-    "verified": {"const": true},
-    "verifiedAt": {"type": "string", "format": "date-time"},
-    "cached": {"type": "boolean"}
+    "protocolVersion": {
+      "const": 1
+    },
+    "address": {
+      "type": "string",
+      "pattern": "^[0-9A-F]{4}$"
+    },
+    "name": {
+      "type": "string"
+    },
+    "maxBrightness": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "off": {
+      "type": "boolean"
+    },
+    "verified": {
+      "const": true
+    },
+    "verifiedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "cached": {
+      "type": "boolean"
+    }
   }
 }

@@ -2,7 +2,7 @@
 
 ## Project objective
 
-This repository controls SANlight EVO Bluetooth Mesh dimmers from a Raspberry Pi through BlueZ. It now contains both a hardened command-line control path and an optional always-on MQTT edge gateway. The CLI remains the authoritative Mesh transaction engine; the gateway adds serialized, versioned and auditable LAN integration without exposing Mesh secrets.
+This repository controls SANlight EVO Bluetooth Mesh dimmers from a Raspberry Pi through BlueZ. It now contains both a hardened command-line control path and an always-on MQTT edge gateway. The CLI remains the authoritative Mesh transaction engine; the gateway adds serialized, versioned and auditable LAN integration without exposing Mesh secrets.
 
 The current validated host path is:
 
@@ -95,7 +95,7 @@ docs/
   MQTT_GATEWAY.md                 gateway installation and operation
   MQTT_API.md                     versioned broker contract
   MQTT_TEST_PLAN.md               validation record and regression plan
-  IOBROKER_INTEGRATION.md         generic adapter and future native adapter
+  IOBROKER_INTEGRATION.md         generic integration and native-adapter boundary
 schemas/                          MQTT v1 JSON schemas
 tests/                            standard-library unittest suite; fake keys only
 ```
@@ -293,7 +293,7 @@ The clean-image CLI path and the MQTT gateway are both hardware validated. Remai
 1. add machine-readable CLI output only where it provides value beyond MQTT v1, without changing default human output;
 2. add read-only time-drift monitoring before any opt-in automatic clock synchronization;
 3. add optional TLS deployment guidance and broader broker interoperability tests;
-4. create a native ioBroker adapter in a separate repository only when typed objects and UX justify it;
+4. evolve the separate native ioBroker adapter while keeping MQTT API v1 as the only runtime contract;
 5. investigate coordinated Bluetooth Mesh IV Update separately; never approximate it by manually incrementing IV Index.
 
 Automatic clock or brightness changes must remain explicit opt-in runtime behavior and must never become part of installation.
@@ -356,4 +356,52 @@ The addresses, node names, local IP addresses and 68% value belong to that insta
 
 The validated generic ioBroker integration creates objects below `mqtt.0.sanlightmesh.v1.<gateway-id>`. JSON payloads are stored as strings, and one object remains for each observed result topic. This is expected generic-adapter behavior, not a gateway defect. The tested adapter configuration disabled automatic own-state publication, publish-on-connect, retained publication and persistent sessions; commands were sent explicitly with `sendMessage2Client`.
 
-A native ioBroker adapter remains a separate future repository (`Nibbels/ioBroker.sanlightmesh`) and must depend only on MQTT API v1. Do not create it inside this Python repository or duplicate BlueZ logic there.
+The native ioBroker adapter lives in the separate `Nibbels/ioBroker.sanlightmesh` repository and depends only on MQTT API v1. Do not move it into this Python repository or duplicate BlueZ logic there.
+
+## Productization decision, 2026-07
+
+The repository was renamed from `sanlight-mesh-bluez-poc` to `sanlight-mesh-mqtt-gateway`. The current GitHub repository is:
+
+```text
+https://github.com/Nibbels/sanlight-mesh-mqtt-gateway
+```
+
+A separate repository now owns the native ioBroker integration:
+
+```text
+https://github.com/Nibbels/ioBroker.sanlightmesh
+```
+
+Repository boundary:
+
+- this Python repository owns BlueZ Mesh, SANlight protocol handling, sequence continuity, replay recovery, local secrets, MQTT API v1, gateway installation and diagnostics;
+- `ioBroker.sanlightmesh` owns MQTT connectivity from ioBroker, Admin configuration, typed objects, command/result correlation and user-facing automation states;
+- the ioBroker adapter must never use SSH, import the CDB, receive Mesh keys or duplicate BlueZ logic;
+- MQTT API v1 is the only runtime contract between the repositories.
+
+Deployment and isolation rules:
+
+- gateway, broker and ioBroker may run on one host or on separate hosts;
+- one ioBroker adapter instance manages exactly one configured `gateway.id`;
+- separate grow rooms or facilities should use separate gateway IDs and preferably ACL-scoped MQTT users;
+- adapter subscriptions must use the exact configured gateway ID, never a wildcard across every gateway;
+- only one active gateway may use a given Bluetooth Mesh sender address and sequence state.
+
+Maintenance strategy:
+
+- do not introduce Debian packaging until real user demand justifies the support burden;
+- prefer tagged source/release archives, SHA-256 checksums and an idempotent shell installer;
+- keep system dependencies from Debian/Raspberry Pi OS repositories where possible;
+- keep the validated CLI engine as the diagnostic and transaction core;
+- normal users should interact with the systemd service, management helper and ioBroker adapter rather than assembling CLI calls;
+- installation must remain read-only toward lamp brightness and time.
+
+New productization helpers:
+
+- `scripts/install-gateway.sh` interactively creates the protected MQTT configuration and delegates to the validated service installer;
+- `scripts/sanlight-gateway` provides status, read-only doctor checks, logs, restart and redacted diagnostics;
+- `scripts/release-archive.sh` builds a secret-free release archive and SHA-256 file;
+- `docs/ARCHITECTURE.md`, `docs/INSTALLER.md`, `docs/RELEASES.md`, `docs/CHATGPT_SUPPORT.md` and `SECURITY.md` define the product boundary.
+
+These new helpers are code-reviewed and syntax-tested but are not hardware-validated merely because the underlying gateway is hardware-validated. Perform a fresh target-host install/upgrade test before describing the installer as broadly validated.
+

@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Nibbels/sanlight-mesh-mqtt-gateway/main/schemas/node-meta-v1.schema.json",
+  "title": "SANlight Mesh node metadata v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "protocolVersion",
+    "address",
+    "name",
+    "supportsExplicitBlackout"
+  ],
+  "properties": {
+    "protocolVersion": {
+      "const": 1
+    },
+    "address": {
+      "type": "string",
+      "pattern": "^[0-9A-F]{4}$"
+    },
+    "name": {
+      "type": "string"
+    },
+    "writable": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "maxBrightness": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "minimum": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "maximum": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            }
+          }
+        }
+      }
+    },
+    "supportsExplicitBlackout": {
+      "type": "boolean"
+    }
+  }
+}

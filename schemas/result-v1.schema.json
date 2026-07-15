@@ -1,20 +1,55 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/Nibbels/sanlight-mesh-bluez-poc/schemas/result-v1.schema.json",
+  "$id": "https://raw.githubusercontent.com/Nibbels/sanlight-mesh-mqtt-gateway/main/schemas/result-v1.schema.json",
   "title": "SANlight Mesh gateway result v1",
   "type": "object",
   "additionalProperties": true,
-  "required": ["protocolVersion", "id", "ok", "status", "message", "timestamp"],
+  "required": [
+    "protocolVersion",
+    "id",
+    "ok",
+    "status",
+    "message",
+    "timestamp"
+  ],
   "properties": {
-    "protocolVersion": {"const": 1},
-    "id": {"type": "string"},
-    "ok": {"type": "boolean"},
-    "status": {"type": "string"},
-    "message": {"type": "string"},
-    "action": {"type": "string"},
-    "target": {"type": "string"},
-    "requested": {"type": "integer"},
-    "details": {"type": "object"},
-    "timestamp": {"type": "string", "format": "date-time"}
+    "protocolVersion": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "status": {
+      "type": "string",
+      "minLength": 1
+    },
+    "message": {
+      "type": "string"
+    },
+    "action": {
+      "enum": [
+        "set-max",
+        "refresh",
+        "blackout",
+        "restore-blackout"
+      ]
+    },
+    "target": {
+      "type": "string"
+    },
+    "requested": {
+      "type": "integer"
+    },
+    "details": {
+      "type": "object"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    }
   }
 }

@@ -1,6 +1,6 @@
 # MQTT edge gateway
 
-The optional MQTT service turns the lamp-side Raspberry Pi into an always-on LAN edge gateway:
+The MQTT service turns the lamp-side Raspberry Pi into an always-on LAN edge gateway:
 
 ```text
 ioBroker or another MQTT client
@@ -25,7 +25,7 @@ This is an unofficial community project and is not affiliated with or endorsed b
 
 ## Status
 
-The gateway implementation is merged into `main` and hardware validated for the documented installation. It remains part of an unofficial PoC: there is no stable release/support contract, and deployments with different firmware, Mesh topology, broker or network-security requirements must be validated independently.
+The gateway implementation is merged into `main` and hardware validated for the documented installation. It is a pre-1.0 community gateway: there is not yet a broad support contract, and deployments with different firmware, Mesh topology, broker or network-security requirements must be validated independently.
 
 The completed validation covered:
 
@@ -122,6 +122,25 @@ sudo journalctl -fu sanlight-mqtt-gateway.service
 ```
 
 The installed unit uses `PYTHONUNBUFFERED=1`, so gateway messages should appear in the journal immediately rather than only during shutdown.
+
+
+## Interactive deployment helper
+
+After `SETUP.md` has created and verified the local Mesh identities, the new wrapper can create the protected MQTT configuration and install the service:
+
+```bash
+sudo bash scripts/install-gateway.sh
+```
+
+It asks for broker settings and stores the password in a separate mode-0600 file. It does not provision the Mesh and never changes lamp brightness or time. See [INSTALLER.md](INSTALLER.md) for scope and current validation status.
+
+For routine checks and redacted support output:
+
+```bash
+sudo scripts/sanlight-gateway status
+sudo scripts/sanlight-gateway doctor
+sudo scripts/sanlight-gateway collect-diagnostics
+```
 
 ## Update an installed gateway
 

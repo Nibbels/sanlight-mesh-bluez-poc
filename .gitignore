@@ -8,6 +8,10 @@ SANlightMesh.json
 .sanlight-mesh-poc-*-state.json
 *.state.json
 
+# Generated releases and diagnostics
+dist/
+sanlight-gateway-diagnostics-*.txt
+
 # Python
 __pycache__/
 *.py[cod]

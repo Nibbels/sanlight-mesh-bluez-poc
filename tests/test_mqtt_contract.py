@@ -9,6 +9,7 @@ class MqttContractTest(unittest.TestCase):
         names = {
             "command-v1.schema.json",
             "result-v1.schema.json",
+            "node-meta-v1.schema.json",
             "node-state-v1.schema.json",
             "gateway-info-v1.schema.json",
         }

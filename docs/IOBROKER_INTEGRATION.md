@@ -20,7 +20,7 @@ mqtt.0.sanlightmesh.v1.<gateway-id>.result.<command-id>
 
 A tree containing many `result` objects is expected: every unique command ID has its own non-retained result topic, and ioBroker keeps the created state object after the MQTT message has passed.
 
-The generic adapter stores JSON payloads as strings. For example, a node-state value contains serialized JSON with fields such as `maxBrightness`, `off`, `verified` and `verifiedAt`. This is normal for the generic integration; it is not yet a typed native object model.
+The generic adapter stores JSON payloads as strings. For example, a node-state value contains serialized JSON with fields such as `maxBrightness`, `off`, `verified` and `verifiedAt`. This is normal for the generic integration; the dedicated adapter provides the typed object model instead.
 
 ## Suggested MQTT adapter settings
 
@@ -88,11 +88,11 @@ Read the corresponding result object after publication. The exact adapter call i
 
 Deleting old ioBroker `result` state objects is optional housekeeping; it does not delete or replay MQTT commands on the broker. Do not delete retained `availability`, `gateway/info`, node metadata or node-state topics unless deliberately resetting the integration view.
 
-A future script or native adapter may keep only a bounded command history in typed states.
+The dedicated native adapter keeps only bounded command status in typed states and does not create one object per command ID.
 
-## Future native adapter
+## Native adapter repository
 
-A native adapter should be a separate repository:
+The initial native adapter implementation is developed in a separate repository:
 
 ```text
 Repository: Nibbels/ioBroker.sanlightmesh
@@ -116,5 +116,21 @@ The native adapter must not contain CDB keys, invoke Bluetooth remotely, use SSH
 Required gateway repository:
 
 ```text
-https://github.com/Nibbels/sanlight-mesh-bluez-poc
+https://github.com/Nibbels/sanlight-mesh-mqtt-gateway
 ```
+
+## Instance isolation
+
+The native adapter deliberately manages exactly one configured gateway per instance. This is a safety and usability boundary, not a limitation to remove.
+
+Examples:
+
+```text
+sanlightmesh.0 -> room-a
+sanlightmesh.1 -> room-b
+```
+
+Each instance subscribes only to `sanlightmesh/v1/<configured-gateway-id>/...`. It must not discover and combine every gateway on a broker. Multiple instances may share a broker, or each room may use a separate broker.
+
+This design prevents lamps from separate grow rooms, buildings or clubs from appearing in one control tree by accident.
+

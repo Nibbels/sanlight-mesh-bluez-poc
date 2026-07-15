@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/Nibbels/sanlight-mesh-bluez-poc/schemas/gateway-info-v1.schema.json",
+  "$id": "https://raw.githubusercontent.com/Nibbels/sanlight-mesh-mqtt-gateway/main/schemas/gateway-info-v1.schema.json",
   "title": "SANlight Mesh gateway info v1",
   "type": "object",
   "additionalProperties": true,
@@ -19,20 +19,44 @@
       "const": 1
     },
     "serviceVersion": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1
     },
     "gatewayId": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,47}$"
     },
     "meshUuid": {
-      "type": "string"
+      "type": "string",
+      "minLength": 1
     },
     "senderAddress": {
       "type": "string",
       "pattern": "^[0-9A-F]{4}$"
     },
+    "commandTopic": {
+      "type": "string",
+      "minLength": 1
+    },
     "nodes": {
-      "type": "array"
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "address",
+          "name"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "pattern": "^[0-9A-F]{4}$"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      }
     },
     "writePolicy": {
       "type": "object"
@@ -47,9 +71,10 @@
       "minimum": 0,
       "maximum": 16777215
     },
-    "timestamp": {
-      "type": "string",
-      "format": "date-time"
+    "sequenceRemainingPercent": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
     },
     "sequenceStatus": {
       "enum": [
@@ -58,13 +83,12 @@
         "critical"
       ]
     },
-    "sequenceRemainingPercent": {
-      "type": "number",
-      "minimum": 0,
-      "maximum": 100
-    },
     "sequenceWarning": {
       "type": "string"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
     }
   }
 }
