@@ -5,7 +5,6 @@ import subprocess
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -49,6 +48,7 @@ class ProductizationFilesTest(unittest.TestCase):
         self.assertNotIn("set-max", installer)
         self.assertNotIn("set-time", installer)
         self.assertNotIn("blackout", installer)
+        self.assertNotIn("--reset-mesh-state", installer)
         self.assertIn("--check", installer)
         self.assertIn("temporary.replace(path)", installer)
 
@@ -67,10 +67,37 @@ class ProductizationFilesTest(unittest.TestCase):
 
     def test_private_material_not_bundled(self) -> None:
         forbidden_names = {"SANlightMesh.json", "mqtt-password.txt"}
-        for path in ROOT.rglob("*"):
-            if path.is_file():
-                self.assertNotIn(path.name, forbidden_names)
-                self.assertNotIn(".state", path.parts)
+
+        try:
+            completed = subprocess.run(
+                ["git", "-C", str(ROOT), "ls-files", "-z"],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError:
+            completed = None
+
+        if completed is not None and completed.returncode == 0:
+            paths = (
+                Path(value)
+                for value in completed.stdout.split("\0")
+                if value
+            )
+        else:
+            # A release archive has no .git metadata. Runtime-private paths are
+            # intentionally populated after extraction and are checked instead
+            # by release-archive exclusions and file-permission tests.
+            paths = (
+                path.relative_to(ROOT)
+                for path in ROOT.rglob("*")
+                if path.is_file()
+                and not ({".git", "private", ".state"} & set(path.relative_to(ROOT).parts))
+            )
+
+        for path in paths:
+            self.assertNotIn(path.name, forbidden_names)
+            self.assertNotIn(".state", path.parts)
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ class GatewayStoreTest(unittest.TestCase):
     def test_dedup_result_and_node_state_survive_reload(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "state.json"
-            now = datetime(2026, 7, 15, 20, 0, tzinfo=timezone.utc)
+            now = datetime.now(timezone.utc)
             store = GatewayStore(path, dedup_ttl_seconds=3600, dedup_max_entries=10)
             store.remember_result("a", {"ok": True}, now=now)
             store.update_node("0003", 48, now=now)
@@ -18,7 +18,6 @@ class GatewayStoreTest(unittest.TestCase):
             self.assertEqual(reloaded.get_result("a"), {"ok": True})
             self.assertEqual(reloaded.get_node("0003").max_brightness, 48)
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
-
 
     def test_inflight_marker_is_persistent_and_cleared_by_final_result(self):
         with tempfile.TemporaryDirectory() as tmp:

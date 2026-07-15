@@ -13,7 +13,6 @@ STATE_DIR="$REPO_DIR/.state"
 IV_INDEX=""
 REUSE_EXISTING=0
 NO_START=0
-RESET_MESH_STATE=0
 SKIP_PACKAGES=0
 ALLOW_UNSUPPORTED=0
 
@@ -36,7 +35,6 @@ Options:
   --no-start              install MQTT service without starting it
   --skip-packages         skip apt update/install
   --allow-unsupported     warn instead of failing outside validated platform
-  --reset-mesh-state      DESTRUCTIVE: clear local BlueZ/project identity state
   -h, --help              show this help
 EOF
 }
@@ -61,7 +59,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --reuse-existing) REUSE_EXISTING=1 ;;
         --no-start) NO_START=1 ;;
-        --reset-mesh-state) RESET_MESH_STATE=1 ;;
         --skip-packages) SKIP_PACKAGES=1 ;;
         --allow-unsupported) ALLOW_UNSUPPORTED=1 ;;
         -h|--help) usage; exit 0 ;;
@@ -81,7 +78,6 @@ if [[ "$EUID" -ne 0 ]]; then
     [[ -n "$IV_INDEX" ]] && args+=(--iv-index "$IV_INDEX")
     [[ "$REUSE_EXISTING" -eq 1 ]] && args+=(--reuse-existing)
     [[ "$NO_START" -eq 1 ]] && args+=(--no-start)
-    [[ "$RESET_MESH_STATE" -eq 1 ]] && args+=(--reset-mesh-state)
     [[ "$SKIP_PACKAGES" -eq 1 ]] && args+=(--skip-packages)
     [[ "$ALLOW_UNSUPPORTED" -eq 1 ]] && args+=(--allow-unsupported)
     exec sudo -- bash "$0" "${args[@]}"
@@ -213,7 +209,6 @@ fi
 
 SETUP_ARGS=(--cdb "$CDB_PATH" --state-dir "$STATE_DIR")
 [[ -n "$IV_INDEX" ]] && SETUP_ARGS+=(--iv-index "$IV_INDEX")
-[[ "$RESET_MESH_STATE" -eq 1 ]] && SETUP_ARGS+=(--reset-mesh-state)
 [[ "$SKIP_PACKAGES" -eq 1 ]] && SETUP_ARGS+=(--skip-packages)
 [[ "$ALLOW_UNSUPPORTED" -eq 1 ]] && SETUP_ARGS+=(--allow-unsupported)
 
