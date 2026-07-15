@@ -26,7 +26,7 @@ The installer performs the complete local deployment:
 
 It never changes lamp brightness or lamp time. A gateway startup may perform the configured **read-only** refresh.
 
-When `.state/` is missing but the exact CDB-derived BlueZ identity still exists, the installer validates its UUID path, DeviceKey, unicast address, token and IV Index before reconstructing the protected project state. It never identifies an identity through optional fields such as `appKeys` and never re-imports over ambiguous state.
+The installer preserves compatible existing Mesh state and stops safely when the local identity state is inconsistent.
 
 See **[SETUP.md](SETUP.md)** for the minimal clean-host procedure and **[INSTRUCTIONS.md](INSTRUCTIONS.md)** for operation, updates, recovery and advanced flags.
 

@@ -342,6 +342,8 @@ The normal installation and upgrade command is:
 
 It installs both persistent services, all Mesh/MQTT dependencies and the protected MQTT configuration. `setup-all.sh`, `install-service.sh` and `install-mqtt-gateway.sh` are lower-level helpers rather than separate user-facing installation phases.
 
+Existing BlueZ identities are adopted rather than re-imported. If the protected project state is missing while the matching CDB-derived BlueZ identity remains intact, the installer reconstructs the project state only after strict validation. Inconsistent or ambiguous state combinations abort without modifying the identity.
+
 Before any `Network1.Import`, the installer stops the gateway and Mesh services and classifies each CDB identity independently:
 
 | Protected project state | Exact CDB-derived BlueZ `node.json` | Action |
