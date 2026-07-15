@@ -6,6 +6,36 @@ The validated integration uses an external Mosquitto broker and ioBroker's gener
 
 This is sufficient for automation and monitoring in the tested installation. It is intentionally a generic JSON-string integration rather than a polished, typed native adapter.
 
+
+## Broker and client roles
+
+The validated topology is:
+
+```text
+SANlight gateway on the lamp-side Pi
+    -> Mosquitto broker on the ioBroker host
+    -> ioBroker MQTT adapter in client/subscriber mode
+```
+
+The broker and ioBroker may run on the same Raspberry Pi, but they remain separate processes with separate responsibilities. The remote SANlight gateway connects to the ioBroker host's LAN IP or DNS name. The ioBroker MQTT adapter connects to `localhost:1883` when Mosquitto runs on that same host.
+
+The gateway repository includes `scripts/install-mosquitto-broker.sh` for a clean Debian/Raspberry Pi OS broker host. Copy the script to the broker/ioBroker host and run:
+
+```bash
+sudo bash install-mosquitto-broker.sh
+```
+
+The script creates two users:
+
+- `sanlight-gateway`: reads only the gateway command topic and writes gateway availability, metadata, state and results;
+- `sanlight-iobroker`: reads the gateway output topics and writes only the gateway command topic.
+
+Both accounts are restricted to the configured `sanlightmesh/v1/<gateway-id>/...` namespace. Anonymous access is disabled.
+
+The default broker script configures password authentication without TLS on port `1883`. Use it only on a trusted private LAN. The gateway installer must use the `sanlight-gateway` credentials; the ioBroker adapter must use the separate `sanlight-iobroker` credentials.
+
+The ioBroker MQTT adapter's server mode is not the validated broker path for this project. In particular, it has not been validated against the gateway's MQTT 5 retained-command subscription safeguards. Use the adapter in client/subscriber mode with Mosquitto unless that alternative is reviewed and tested separately.
+
 ## Validated adapter behavior
 
 The generic adapter subscribes to the gateway tree and creates objects below an instance such as:
@@ -27,8 +57,8 @@ The generic adapter stores JSON payloads as strings. For example, a node-state v
 Validated shape:
 
 - connection mode: client/subscriber;
-- broker URL and port of the external Mosquitto host;
-- dedicated ioBroker broker user with ACL-limited access;
+- broker host `localhost` and port `1883` when Mosquitto runs on the same ioBroker host;
+- username `sanlight-iobroker` and the separate password created by the broker setup script;
 - subscribe to:
   - `sanlightmesh/v1/<gateway-id>/availability`
   - `sanlightmesh/v1/<gateway-id>/gateway/#`

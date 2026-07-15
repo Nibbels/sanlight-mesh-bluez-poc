@@ -334,6 +334,62 @@ timedatectl
 sudo raspi-config
 ```
 
+## External MQTT broker prerequisite
+
+The lamp-side gateway is an MQTT client. `scripts/install-gateway.sh` installs the gateway runtime and its MQTT client dependency, but it deliberately does not install or configure a broker on another host.
+
+The validated ioBroker deployment runs Mosquitto on the ioBroker host and runs the ioBroker MQTT adapter in client/subscriber mode. The repository provides a separate broker-host helper:
+
+```bash
+sudo bash scripts/install-mosquitto-broker.sh
+```
+
+Run that script on the broker/ioBroker host, not on the lamp-side gateway host. When the repository is not present there, copy only the script to that host first.
+
+The broker helper is intended for a clean Debian or Raspberry Pi OS Mosquitto installation. It:
+
+1. installs `mosquitto` and `mosquitto-clients` unless `--skip-packages` is supplied;
+2. refuses to merge automatically when another listener or authentication configuration exists under `/etc/mosquitto/conf.d`;
+3. creates a password-authenticated listener, defaulting to `0.0.0.0:1883`;
+4. creates separate `sanlight-gateway` and `sanlight-iobroker` password entries;
+5. writes an ACL restricted to one `sanlightmesh/v1/<gateway-id>/...` namespace;
+6. disables anonymous access;
+7. restarts Mosquitto, verifies the listener and verifies that anonymous publication is rejected.
+
+Managed files are:
+
+```text
+/etc/mosquitto/conf.d/sanlight-mesh-gateway.conf
+/etc/mosquitto/sanlight-mesh-passwords
+/etc/mosquitto/sanlight-mesh-acl
+```
+
+The password and ACL files are readable by root and the `mosquitto` group only. Existing managed passwords are preserved on a normal rerun. Use `--reset-passwords` only for a deliberate credential rotation, then update both the gateway and ioBroker configurations.
+
+The generated ACL grants:
+
+- `sanlight-gateway`: read access to `command` and write access to `availability`, `gateway/#`, `nodes/#` and `result/#`;
+- `sanlight-iobroker`: write access to `command` and read access to the gateway output topics.
+
+The default broker helper does not configure TLS. Passwords and MQTT payloads therefore travel unencrypted and this setup is suitable only for a trusted private LAN. Use a separately reviewed TLS configuration for untrusted or routed networks.
+
+When Mosquitto and ioBroker run on the same host, configure the ioBroker adapter for `localhost:1883`. Configure the remote lamp-side gateway with the broker host's LAN IP or DNS name; `localhost` on that gateway would refer to the wrong machine.
+
+The ioBroker adapter's server mode is not the validated broker path and has not been validated against the gateway's MQTT 5 retained-command subscription safeguards.
+
+Broker helper options:
+
+```text
+--gateway-id ID
+--port PORT
+--bind-address ADDRESS
+--reset-passwords
+--skip-packages
+--yes
+```
+
+Detailed ioBroker client settings are in [docs/IOBROKER_INTEGRATION.md](docs/IOBROKER_INTEGRATION.md).
+
 ## End-to-end installer and BlueZ identity-state adoption
 
 The normal installation and upgrade command is:
