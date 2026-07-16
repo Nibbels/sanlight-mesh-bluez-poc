@@ -61,15 +61,26 @@ class LocalBrokerInstallerTest(unittest.TestCase):
         integration = (ROOT / "docs" / "IOBROKER_INTEGRATION.md").read_text(
             encoding="utf-8"
         )
-        combined = setup + "\n" + integration
+        normalized_setup = " ".join(setup.split())
+        normalized_integration = " ".join(integration.split())
+        normalized_combined = normalized_setup + " " + normalized_integration
 
-        self.assertIn("sudo bash scripts/install-gateway.sh", setup)
-        self.assertIn("https://github.com/Nibbels/ioBroker.sanlightmesh", combined)
-        self.assertIn("one sanlightmesh instance per gateway Pi", integration)
-        self.assertIn("one exact gateway ID", integration)
-        self.assertIn("another adapter instance", integration)
-        self.assertNotIn("install-mosquitto-broker.sh", combined)
-        self.assertIn("generic ioBroker MQTT adapter is not required", setup)
+        self.assertIn("sudo bash scripts/install-gateway.sh", normalized_setup)
+        self.assertIn(
+            "https://github.com/Nibbels/ioBroker.sanlightmesh",
+            normalized_combined,
+        )
+        self.assertIn(
+            "one sanlightmesh instance per gateway Pi",
+            normalized_integration,
+        )
+        self.assertIn("one exact gateway ID", normalized_integration)
+        self.assertIn("another adapter instance", normalized_integration)
+        self.assertNotIn("install-mosquitto-broker.sh", normalized_combined)
+        self.assertIn(
+            "generic ioBroker MQTT adapter is not required",
+            normalized_setup,
+        )
 
     def test_gateway_service_requires_local_broker(self) -> None:
         unit = (ROOT / "systemd" / "sanlight-mqtt-gateway.service.example").read_text(
