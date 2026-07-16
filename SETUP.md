@@ -72,18 +72,37 @@ A successful installation ends with:
 Doctor result: healthy
 ```
 
-### When an IV Index is requested
+### Normally no IV Index input is required
 
-An existing working BlueZ identity normally supplies the trusted IV Index. A
-new export may also contain it. If no trusted source exists, the installer stops
-and requires an independently verified value:
+Use the normal installer command without `--iv-index`:
 
 ```bash
-sudo bash scripts/install-gateway.sh --iv-index VERIFIED_IV_INDEX
+sudo bash scripts/install-gateway.sh
 ```
 
-Do not guess the value. See [INSTRUCTIONS.md](INSTRUCTIONS.md) for the identity
-state matrix and recovery rules.
+The installer automatically accepts the current IV Index when it is available
+from the top-level `ivIndex` in `SANlightMesh.json` or from the exact matching
+BlueZ identities under `/var/lib/bluetooth/mesh`.
+
+If neither trusted source exists, the installer stops before importing an
+identity. There is no safe universal default for an existing Bluetooth Mesh
+network. First export `SANlightMesh.json` again from a SANlight app currently
+connected to the mesh, or restore the matching BlueZ identity databases from the
+existing gateway.
+
+Only when the current value has already been independently verified, pass it
+explicitly. For example:
+
+```bash
+sudo bash scripts/install-gateway.sh --iv-index 0
+```
+
+The value `0` is correct for the repository maintainer's hardware-validation
+mesh and may be used for a completely clean reinstall of that same mesh. It is
+not a default for other installations.
+
+See [Missing a trusted IV Index](INSTRUCTIONS.md#missing-a-trusted-iv-index) for
+exact recovery cases and accepted value formats.
 
 ## 4. Save the ioBroker connection data
 

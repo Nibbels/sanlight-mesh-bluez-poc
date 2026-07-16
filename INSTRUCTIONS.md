@@ -69,7 +69,7 @@ sudo ./scripts/sanlight-env-check.sh --allow-unsupported
 The complete product setup performs these stages in order:
 
 1. secure and semantically validate the CDB;
-2. determine a mutually consistent IV Index from the CDB, existing project state, validated BlueZ identity state or an explicit `--iv-index` value;
+2. determine a mutually consistent IV Index from the CDB, exact matching BlueZ identity state or an explicit `--iv-index` value; protected project state is accepted only when it matches BlueZ;
 3. install the validated BlueZ, Python, Paho MQTT, Mosquitto and diagnostic packages;
 4. compile Python and run the offline safety suite;
 5. verify trixie, 64-bit ARM, BlueZ 5.82, `hci0`, D-Bus and GLib;
@@ -86,6 +86,53 @@ The normal command is:
 ```bash
 sudo bash scripts/install-gateway.sh
 ```
+
+### Missing a trusted IV Index
+
+A normal installation does not ask the user to choose an IV Index. Run the
+installer without `--iv-index`. It resolves the value from trusted state in this
+order:
+
+1. an explicit `--iv-index`, when one was deliberately supplied;
+2. the top-level CDB `ivIndex`, when present in `SANlightMesh.json`;
+3. the `IVindex` stored by the exact matching control and sender BlueZ
+   identities under `/var/lib/bluetooth/mesh`.
+
+All available values must agree. Protected project `.state/*.json` files are not
+an independent IV source: they are accepted only when they match the exact
+corresponding BlueZ identity.
+
+If all trusted sources are absent, the installer stops before any fresh identity
+import. This normally means a completely new gateway was combined with an older
+SANlight export that does not contain `ivIndex`, while no matching BlueZ database
+was preserved.
+
+Use this recovery order:
+
+1. Export `SANlightMesh.json` again from a SANlight app currently connected to
+   the mesh, replace `private/SANlightMesh.json`, and rerun the normal installer.
+2. When migrating an existing gateway, preserve or restore the matching
+   `/var/lib/bluetooth/mesh` databases and rerun the normal installer.
+3. Only when the current network value has already been independently verified,
+   pass it explicitly:
+
+   ```bash
+   sudo bash scripts/install-gateway.sh --iv-index VALUE
+   ```
+
+Decimal and conventional hexadecimal input are accepted, for example `0` and
+`0x00000000`. These examples show the syntax; they are not universal defaults.
+
+The repository maintainer's hardware-validation mesh was independently
+established as IV Index `0`. A completely clean reinstall of that same mesh may
+therefore use:
+
+```bash
+sudo bash scripts/install-gateway.sh --iv-index 0
+```
+
+Do not copy that value to a different mesh. The IV Index is network-wide replay
+protection state and may have advanced through an IV Update.
 
 No state is reset by default. The public installer deliberately has no
 `--reset-mesh-state` option.
@@ -594,11 +641,14 @@ sudo bash ./scripts/setup-all.sh \
 
 ### CDB has no `ivIndex`
 
-Obtain the current IV Index from the known working Mesh context. Do not guess. Pass it explicitly:
+This alone is not an error. The normal installer can still use the current value
+from matching existing BlueZ identities. Do not supply `--iv-index` unless the
+installer reports that every trusted source is absent.
 
-```bash
-sudo bash ./scripts/install-gateway.sh --iv-index VERIFIED_IV_INDEX
-```
+When that error occurs, follow [Missing a trusted IV Index](#missing-a-trusted-iv-index).
+Do not guess a value from the lamp addresses, SANlight App-ID, AppKey index,
+Sequence Number or time since installation; none of those determines the IV
+Index.
 
 ### Replay protection after a fresh SD card
 

@@ -264,9 +264,24 @@ def reconcile_identity(
 def resolve_effective_iv(candidates: Sequence[tuple[str, int | None]]) -> int:
     present = [(label, value) for label, value in candidates if value is not None]
     if not present:
+        checked = "\n".join(
+            f"  - {label}: not available" for label, _value in candidates
+        )
         raise IdentityRecoveryError(
-            "No trusted IV Index is available. Supply --iv-index with an independently "
-            "verified current value."
+            "No trusted IV Index is available.\n\n"
+            "Checked sources:\n"
+            f"{checked}\n\n"
+            "For a normal installation, do not guess a value. Recovery order:\n"
+            "  1. Export SANlightMesh.json again from a SANlight app currently "
+            "connected to this mesh, replace private/SANlightMesh.json, and rerun "
+            "the normal installer.\n"
+            "  2. When migrating an existing gateway, preserve or restore the "
+            "matching /var/lib/bluetooth/mesh databases.\n"
+            "  3. Only when the current value has been independently verified, "
+            "rerun:\n"
+            "       sudo bash scripts/install-gateway.sh --iv-index VALUE\n\n"
+            "Accepted forms include 0 and 0x00000000. These are syntax examples, "
+            "not universal defaults. See INSTRUCTIONS.md#missing-a-trusted-iv-index."
         )
     first_label, first_value = present[0]
     assert first_value is not None
@@ -417,6 +432,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     for result in results:
         print(f"{result.label}: {result.status}", file=sys.stderr)
+    print(
+        f"Trusted Mesh IV Index: {effective_iv} (0x{effective_iv:08x})",
+        file=sys.stderr,
+    )
     print(effective_iv)
     return 0
 
