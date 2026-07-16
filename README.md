@@ -59,7 +59,7 @@ The installer:
 - creates separate scoped credentials for the gateway and ioBroker;
 - starts the services and performs read-only health checks.
 
-It **does not change lamp brightness or lamp time**.
+Setup **does not change lamp brightness or lamp time**.
 
 Continue with [SETUP.md](SETUP.md) for the complete gateway installation. When
 it finishes, use the adapter repository's README for ioBroker installation and
