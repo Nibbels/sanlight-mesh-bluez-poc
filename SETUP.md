@@ -1,19 +1,27 @@
 # End-to-end installation
 
-This is the normal installation path for a clean **Raspberry Pi OS Lite 64-bit /
-Debian 13 trixie** lamp-side host and for an existing host whose protected
-project `.state/` is missing.
+This is the normal installation path. It creates one self-contained SANlight
+gateway Raspberry Pi and connects it to one native ioBroker adapter instance.
 
-The single installer configures:
+The installer does **not** change lamp brightness or lamp time.
 
-- both local BlueZ Mesh identities;
-- the persistent SANlight MQTT gateway;
-- a local authenticated Mosquitto broker;
-- separate gateway and ioBroker MQTT users with gateway-scoped ACLs.
+## Before you start
 
-It does **not** change lamp time or brightness.
+You need:
 
-## 1. Clone the repository
+- a Raspberry Pi near the SANlight lamps;
+- Raspberry Pi OS Lite 64-bit / Debian 13 `trixie`;
+- the private `SANlightMesh.json` exported from the SANlight app;
+- an ioBroker installation reachable over the same trusted LAN;
+- a stable DHCP reservation or hostname for the gateway Pi.
+
+Do not expose MQTT port `1883` to the internet. The default installation uses
+username/password authentication without TLS and is intended for a trusted
+private LAN or VLAN.
+
+## 1. Clone the gateway repository
+
+On the SANlight gateway Pi:
 
 ```bash
 sudo apt update
@@ -24,9 +32,9 @@ git switch main
 git pull --ff-only
 ```
 
-## 2. Copy the private SANlight export
+## 2. Add the private SANlight export
 
-Export the private Mesh file in the SANlight app and copy it to:
+Copy the export to:
 
 ```text
 private/SANlightMesh.json
@@ -42,112 +50,161 @@ chmod 700 private
 chmod 600 private/SANlightMesh.json
 ```
 
-Never publish this file. It contains Mesh keys and DeviceKeys.
+Never commit or publish this file. It contains Mesh keys and DeviceKeys.
 
-## 3. Run the complete installer
+## 3. Run the single gateway installer
 
 ```bash
 sudo bash scripts/install-gateway.sh
 ```
 
-The wizard asks only for:
+For a normal installation, accept or enter:
 
-- a stable gateway ID, such as `room-a` or `sanlight-pi`;
-- the read-only refresh interval.
+- a stable gateway ID, for example `sanlight-pi`, `room-a` or `greenhouse`;
+- a read-only refresh interval, normally `1800` seconds.
 
-The broker is installed on this SANlight gateway Pi. The gateway automatically
-uses `127.0.0.1:1883`; no separate broker host, username, password or TLS prompt
-is required for the normal setup.
+The installer then:
 
-The installer prints the remote ioBroker settings when it finishes. The
-ioBroker password remains in a protected root-only file and can be displayed
-with the exact command printed by the installer.
+- installs BlueZ, Python, Paho MQTT, Mosquitto and MQTT client tools;
+- validates the private CDB and runs the offline test suite;
+- prepares or safely adopts the two local BlueZ identities;
+- installs the exclusive `generic:hci0` Mesh service;
+- configures a local authenticated Mosquitto broker;
+- creates separate credentials for the gateway and ioBroker;
+- installs and starts the MQTT gateway;
+- prints the ioBroker connection settings;
+- runs `sanlight-gateway doctor`.
 
-### IV Index handling
+A successful installation ends with:
 
-The installer accepts the IV Index from any mutually consistent trusted source:
+```text
+Doctor result: healthy
+```
 
-- the private CDB;
-- an existing validated BlueZ `node.json` identity;
-- existing protected project state;
-- an explicitly supplied `--iv-index` value.
+### IV Index prompt
 
-If this is a genuinely fresh import and none of those sources contains the
-value, provide an independently verified value:
+An existing working BlueZ identity normally supplies the trusted IV Index. A
+new CDB may also contain it.
+
+If a genuinely fresh import has no trusted IV Index source, the installer stops
+and requires an independently verified value:
 
 ```bash
 sudo bash scripts/install-gateway.sh --iv-index VERIFIED_IV_INDEX
 ```
 
-Do not guess and do not assume `0` for another Mesh.
+Do not guess the value. Detailed identity recovery rules are in
+[INSTRUCTIONS.md](INSTRUCTIONS.md).
 
-## 4. Configure ioBroker
+## 4. Save the ioBroker connection data
 
-In ioBroker Admin, use **Install from custom URL** with:
+At the end, the installer prints:
+
+- the gateway Pi LAN address;
+- broker port `1883`;
+- the generated ioBroker username;
+- the gateway ID;
+- the topic prefix/root;
+- the command used to display the protected ioBroker password.
+
+Display the password only when entering it into ioBroker:
+
+```bash
+sudo cat /etc/sanlight-mesh-mqtt-gateway/iobroker-mqtt-password.txt
+```
+
+Do not paste the password into chat, logs or issues. Delete temporary notes after
+configuration.
+
+## 5. Install the native ioBroker adapter
+
+In ioBroker Admin:
+
+1. Open **Adapters**.
+2. Choose **Install from custom URL**.
+3. Enter:
 
 ```text
 https://github.com/Nibbels/ioBroker.sanlightmesh
 ```
 
-Then create one `ioBroker.sanlightmesh` adapter instance for this physical
-gateway. The generic ioBroker MQTT adapter is not required. Configure the native
-instance with:
+4. Install the adapter.
+5. Create one `sanlightmesh` instance for this gateway.
 
-- broker host: a stable LAN IP or hostname of this SANlight gateway Pi;
-- broker port: `1883`;
-- username and password printed/referenced by the installer;
-- gateway ID entered during installation.
+The generic ioBroker MQTT adapter is not required and should not be installed
+for this integration.
 
-For another SANlight gateway Pi, create another ioBroker adapter instance.
-Do not combine multiple physical gateways in one adapter instance.
+## 6. Configure the adapter instance
 
-See [docs/IOBROKER_INTEGRATION.md](docs/IOBROKER_INTEGRATION.md).
+Use the values printed by the gateway installer:
 
-## 5. Verify
+| Setting | Normal value |
+|---|---|
+| MQTT broker host | stable IP/hostname of the SANlight gateway Pi |
+| MQTT broker port | `1883` |
+| Use MQTT TLS | disabled for the documented trusted-LAN setup |
+| MQTT username | generated `sanlight-iobroker-...` username |
+| MQTT password | value from the protected password file |
+| Topic prefix | `sanlightmesh/v1` |
+| Gateway ID | exactly the ID chosen during gateway installation |
+| Command lifetime | `30` seconds |
+| Brightness debounce | `1000` ms |
+| Explicit blackout | disabled initially |
+
+Save the configuration and start the instance.
+
+For another physical SANlight gateway, create another adapter instance and use
+that gateway Pi's address, credentials and gateway ID.
+
+## 7. Verify without changing brightness
+
+On the gateway Pi:
 
 ```bash
 sudo sanlight-gateway doctor
 sudo sanlight-gateway status
 ```
 
-List CDB-derived lamp addresses:
+In ioBroker, these states should become `true`:
 
-```bash
-python3 sanlight_canonical_sender_poc.py \
-  --cdb private/SANlightMesh.json \
-  list-nodes
+```text
+sanlightmesh.0.info.mqttConnected
+sanlightmesh.0.info.gatewayOnline
+sanlightmesh.0.info.protocolCompatible
+sanlightmesh.0.info.connection
 ```
 
-An explicit read-only lamp query remains available:
+Detected lamps appear below:
 
-```bash
-sudo python3 sanlight_canonical_sender_poc.py \
-  --cdb private/SANlightMesh.json \
-  get-live NODE_ADDRESS
+```text
+sanlightmesh.0.lamps
 ```
 
-Replace `NODE_ADDRESS` with a four-digit unicast address printed by
-`list-nodes`.
+Use a lamp's `control.refresh` button for a read-only end-to-end test. A
+successful result reports:
 
-## Updates
+```text
+command.lastStatus = verified
+```
 
-Reuse the existing protected CDB, broker credentials, MQTT configuration and
-identity state:
+Only after the read path works should you test a small reversible brightness
+change within `20..100`, then restore the original value.
+
+## Updating an installed gateway
+
+On the gateway Pi:
 
 ```bash
+cd /path/to/sanlight-mesh-mqtt-gateway
+git switch main
 git pull --ff-only
+git status --short
 ./scripts/run-tests.sh
 sudo bash scripts/install-gateway.sh --reuse-existing
 ```
 
-The normal public installer never resets Mesh state. Destructive reset options
-exist only in lower-level maintenance helpers documented in
-[INSTRUCTIONS.md](INSTRUCTIONS.md).
+This keeps the CDB, BlueZ identity state, gateway ID, broker credentials and
+refresh interval. The normal public installer never resets Mesh state.
 
-### Migration from the former external-broker setup
-
-Running the update command against an older gateway TOML that points to a broker
-on the ioBroker host automatically preserves the gateway ID, CDB/state paths and
-refresh interval, but migrates MQTT to the local broker and generates new
-credentials. After installation, replace the ioBroker adapter's former broker
-host and credentials with the settings printed by the gateway installer.
+Update the ioBroker adapter separately through its GitHub custom-URL installation
+path. See that repository's `INSTRUCTIONS.md` for adapter updates and diagnostics.

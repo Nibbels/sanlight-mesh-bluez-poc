@@ -1,99 +1,137 @@
 # ioBroker integration
 
-## Normal connection model
+The normal integration uses the native
+[`ioBroker.sanlightmesh`](https://github.com/Nibbels/ioBroker.sanlightmesh)
+adapter.
 
-Each SANlight gateway Pi runs its own authenticated Mosquitto broker. ioBroker
-runs on another host and uses the native `ioBroker.sanlightmesh` adapter:
+The gateway installer already installs Mosquitto on the SANlight gateway Pi.
+There is no broker installation step on the ioBroker host.
 
 ```text
-SANlight-PoCe gateway Pi
+SANlight gateway Pi
   BlueZ + SANlight gateway + Mosquitto :1883
                      ^
                      | trusted LAN
                      |
 ioBroker host
-  one sanlightmesh adapter instance per gateway Pi
+  one sanlightmesh instance per gateway Pi
 ```
 
-Do not install ioBroker's generic MQTT adapter for the normal product setup. It
-was useful during early protocol validation, but the native adapter is now the
-single ioBroker integration path and avoids a duplicate raw MQTT object tree.
+The generic ioBroker MQTT adapter is not required. It was useful during early
+protocol testing but creates a second raw MQTT object tree and is not part of
+the normal product setup.
 
-Adapter repository:
+## Install the adapter
+
+In ioBroker Admin:
+
+1. Open **Adapters**.
+2. Choose **Install from custom URL**.
+3. Enter:
 
 ```text
 https://github.com/Nibbels/ioBroker.sanlightmesh
 ```
 
-During development, install it through ioBroker Admin's **Install from custom
-URL** function, then create an instance.
+4. Install the adapter.
+5. Create one instance for the physical SANlight gateway.
 
-## Instance configuration
+During pre-1.0 development, update the adapter through the same GitHub custom-URL
+path.
 
-The gateway installer prints or references all required settings:
+## Configure one instance
 
-- broker host: stable LAN IP/hostname of the corresponding SANlight gateway Pi;
-- broker port: `1883`;
-- MQTT username: generated ioBroker user;
-- MQTT password: obtained with the root-only command printed by the installer;
-- topic prefix: `sanlightmesh/v1`;
-- exact gateway ID selected during gateway installation;
-- TLS: disabled for the supported trusted-LAN topology.
+The gateway installer prints or references every required value.
 
-Use a DHCP reservation or stable local hostname for each gateway Pi. Do not
-publish port `1883` to the internet.
+| Adapter setting | Value |
+|---|---|
+| MQTT broker host | stable LAN IP/hostname of the SANlight gateway Pi |
+| MQTT broker port | `1883` |
+| Use MQTT TLS | disabled for the documented trusted-LAN setup |
+| MQTT username | generated `sanlight-iobroker-<gateway-id>` user |
+| MQTT password | protected value stored on the gateway Pi |
+| Topic prefix | `sanlightmesh/v1` |
+| Gateway ID | exact ID selected during gateway installation |
+| Command lifetime | `30` seconds |
+| Brightness debounce | `1000` ms |
+| Explicit blackout | disabled initially |
 
-## Multiple gateway and adapter instances
-
-Multiple physical SANlight gateways were explicitly designed into the adapter.
-One adapter instance manages exactly one gateway ID and one broker connection:
-
-```text
-sanlightmesh.0 -> room-a.local:1883     -> gateway ID room-a
-sanlightmesh.1 -> room-b.local:1883     -> gateway ID room-b
-sanlightmesh.2 -> greenhouse.local:1883 -> gateway ID greenhouse
-```
-
-Each instance receives an independent ioBroker object namespace and subscribes
-only to the configured gateway's output topics. It must never use a wildcard to
-discover and combine all gateways.
-
-A second room/building therefore needs:
-
-1. another SANlight gateway Pi and its own private CDB/BlueZ identities;
-2. a unique or clearly assigned gateway ID;
-3. one additional `ioBroker.sanlightmesh` adapter instance configured for that
-   Pi's IP/hostname, credentials and gateway ID.
-
-Gateway IDs may technically repeat on separate brokers, but unique descriptive
-IDs are strongly recommended because they make logs, diagnostics and future
-broker migrations unambiguous.
-
-## Credential retrieval and rotation
-
-The ioBroker password is stored only on the corresponding SANlight gateway Pi:
+Retrieve the password on the corresponding gateway Pi:
 
 ```bash
 sudo cat /etc/sanlight-mesh-mqtt-gateway/iobroker-mqtt-password.txt
 ```
 
-Copy the value directly into the protected adapter setting. Do not paste it into
-issues, logs or chat transcripts.
+Copy it directly into the protected adapter setting. Do not paste it into logs,
+issues or chat transcripts.
 
-A normal `--reuse-existing` update preserves local-broker credentials. Migration
-from the former external-broker setup generates new credentials and prints an
-explicit notice; update the matching ioBroker adapter instance afterward.
+## Verify the connection
 
-## Safety and object-state rules
+After starting the instance, these states should become `true`:
 
-- One instance controls only its exact configured gateway ID.
-- Requested brightness and verified reported brightness remain separate.
+```text
+sanlightmesh.0.info.mqttConnected
+sanlightmesh.0.info.gatewayOnline
+sanlightmesh.0.info.protocolCompatible
+sanlightmesh.0.info.connection
+```
+
+Detected lamps appear below `sanlightmesh.0.lamps`.
+
+Use a lamp's `control.refresh` button for the first end-to-end test. It is
+read-only. A successful command produces:
+
+```text
+lamps.<address>.command.lastStatus = verified
+```
+
+Only then test a small reversible MaxBrightness change within `20..100` and
+restore the original value.
+
+## Multiple gateways
+
+One adapter instance intentionally manages exactly one gateway ID and one broker
+connection:
+
+```text
+sanlightmesh.0 -> room-a.local:1883 -> gateway ID room-a
+sanlightmesh.1 -> room-b.local:1883 -> gateway ID room-b
+sanlightmesh.2 -> greenhouse.local:1883 -> gateway ID greenhouse
+```
+
+A second room or building therefore needs:
+
+1. another SANlight gateway Pi with its own CDB and BlueZ identities;
+2. its own gateway ID and generated credentials;
+3. another `ioBroker.sanlightmesh` instance.
+
+Each adapter instance subscribes only to its exact configured topic root. It
+must never wildcard-discover and combine every gateway.
+
+## Safety model
+
+- Requested and verified brightness are separate states.
 - Normal brightness is restricted to `20..100%`.
-- Blackout remains an explicit, separately enabled workflow.
-- Commands are non-retained and use unique IDs plus short TTLs.
-- UI sliders and sensor-driven changes must be debounced.
+- Blackout is a separately enabled workflow and remains disabled by default.
+- Commands are non-retained and have unique IDs and short TTLs.
+- Slider writes are debounced.
 - The gateway remains the final authority for validation, rate limits,
   coalescing, readback and sequence-space safety.
 - Mesh keys, the private CDB and BlueZ state never leave the gateway Pi.
 
-For the exact topic and payload contract, see [MQTT_API.md](MQTT_API.md).
+For object details, see the adapter repository's `docs/OBJECT_MODEL.md`. For the
+wire protocol, see [MQTT_API.md](MQTT_API.md).
+
+## Reference validation
+
+The native adapter path was validated on 2026-07-16 with:
+
+- a Raspberry Pi 4 ioBroker host running Node.js 22.15.0;
+- a separate Raspberry Pi 3 gateway using the local Mosquitto topology;
+- successful MQTT, gateway-online and protocol-compatible states;
+- automatic creation of two lamp object trees;
+- a verified read-only refresh;
+- reversible 68% → 67% → 68% writes on both real lamps, independently visible
+  in the SANlight app.
+
+The addresses and percentages belong only to that reference installation.

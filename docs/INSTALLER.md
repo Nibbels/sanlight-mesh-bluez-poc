@@ -1,42 +1,49 @@
 # Installer design
 
 `scripts/install-gateway.sh` is the single public installation and upgrade entry
-point. `scripts/setup-all.sh`, `scripts/install-service.sh` and
-`scripts/install-mqtt-gateway.sh` remain lower-level internal helpers for
-development and recovery.
+point. There is no second broker-host installer.
 
-There is no separate broker-host installer. The public installer prepares the
-local Mosquitto broker on the same lamp-side Raspberry Pi.
+Lower-level scripts such as `setup-all.sh`, `install-service.sh` and
+`install-mqtt-gateway.sh` remain implementation and recovery helpers. Normal
+users should not assemble the installation from those scripts.
 
-## Responsibilities
+## What the installer owns
 
-The public installer:
+The installer prepares one self-contained SANlight gateway Pi:
 
-1. locates and protects the private CDB and configuration directory;
-2. installs BlueZ, Python, Paho MQTT, Mosquitto and MQTT client tools in one
-   package phase;
-3. runs offline syntax, unit and source-security checks;
-4. validates the Raspberry Pi / BlueZ environment;
-5. stops the project gateway and Mesh services;
-6. classifies both local identities against project and BlueZ state;
-7. safely reconstructs missing project token state or permits a fresh import;
-8. installs and validates the persistent Mesh service;
-9. attaches/imports both identities and applies local model setup;
-10. creates or reuses the protected gateway configuration;
-11. creates a dedicated authenticated Mosquitto listener on port `1883`;
-12. creates separate gateway and ioBroker users with ACLs limited to one
-    gateway ID;
-13. configures the local gateway client to use `127.0.0.1`;
-14. installs both persistent services and runs read-only diagnostics;
-15. prints the remote ioBroker adapter settings.
+1. resolves and protects the private CDB, state and configuration paths;
+2. optionally reads an existing configuration in `--reuse-existing` mode;
+3. installs BlueZ, Python, Paho MQTT, Mosquitto and MQTT client tools;
+4. runs syntax, unit and secret-output checks;
+5. validates the supported Raspberry Pi / BlueZ environment;
+6. stops the project services before reconciling local identity state;
+7. safely adopts existing BlueZ identities or permits a genuine fresh import;
+8. installs and validates `sanlight-meshd-generic.service`;
+9. attaches/imports both local identities and applies the required model setup;
+10. creates or reuses gateway and ioBroker broker credentials;
+11. writes the dedicated Mosquitto listener, password database and ACL;
+12. validates that Mosquitto starts and anonymous access is rejected;
+13. writes the gateway TOML for `127.0.0.1:1883`;
+14. installs and starts `sanlight-mqtt-gateway.service`;
+15. prints the ioBroker connection settings and runs read-only diagnostics.
 
-Installation never calls a lamp brightness or clock write command.
+Installation never sends lamp brightness or clock write commands.
+
+## Normal prompts
+
+A new installation asks only for deployment-specific values:
+
+- gateway ID;
+- read-only refresh interval.
+
+CDB path, project state path, App-ID 1, App-ID 2, local broker endpoint and
+service names are product invariants rather than normal user choices.
 
 ## Local broker policy
 
-The normal broker is dedicated to this SANlight gateway appliance. The installer
-refuses to merge its listener/authentication policy with unrelated Mosquitto
-listener or authentication fragments.
+The broker is dedicated to this gateway appliance and listens on TCP port
+`1883` for the trusted LAN. The gateway itself connects through
+`127.0.0.1:1883`.
 
 Generated private files include:
 
@@ -45,24 +52,20 @@ Generated private files include:
 /etc/sanlight-mesh-mqtt-gateway/iobroker-mqtt-password.txt
 /etc/mosquitto/sanlight-mesh-mqtt-gateway.passwd
 /etc/mosquitto/sanlight-mesh-mqtt-gateway.acl
+/etc/mosquitto/conf.d/sanlight-mesh-mqtt-gateway.conf
 ```
 
-The clear-text passwords remain root-only. The Mosquitto password database
-contains password hashes and is readable by the `mosquitto` service group.
-Passwords are passed to `mosquitto_passwd` through a pseudo-terminal, not as
-command-line arguments.
+The installer creates separate users for the local gateway and the remote
+ioBroker adapter, each restricted to one exact gateway topic root. Passwords are
+not passed to `mosquitto_passwd` through command-line arguments.
 
-The generated ACL permits:
-
-- the local gateway user to subscribe to its command topic and publish only its
-  availability, gateway, node and result trees;
-- the ioBroker user to publish only the configured gateway command topic and
-  subscribe only to availability, gateway, node and result output trees for
-  that gateway.
+The installer refuses to merge its listener/authentication policy with unrelated
+Mosquitto listener or authentication fragments. TLS, an external broker and a
+shared central broker are custom topologies requiring separate validation.
 
 ## Identity-state matrix
 
-Each identity is handled independently:
+Each local identity is handled independently:
 
 | Project state | Exact CDB-derived BlueZ `node.json` | Result |
 |---|---|---|
@@ -70,12 +73,13 @@ Each identity is handled independently:
 | missing | present | validate BlueZ identity; atomically reconstruct project state; attach |
 | missing | missing | permit fresh `Network1.Import` |
 | present | missing | abort; automatic re-import is blocked |
-| any mismatch | any mismatch | abort without printing private values |
-| `node.json.bak` only | missing | abort for manual recovery |
+| mismatch | mismatch | abort without printing private values |
+| only `node.json.bak` | missing | abort for manual recovery |
 
-The installer never scans for whichever identity happens to contain `appKeys`;
-optional field sets may legitimately differ between the control and canonical
-sender databases.
+Identity selection is based on the exact CDB provisioner UUID plus DeviceKey and
+unicast validation. Optional BlueZ fields such as `appKeys` are never used as an
+identity heuristic. Adoption reconstructs only the protected project token file
+and never changes `sequenceNumber` or another BlueZ field.
 
 ## Upgrade mode
 
@@ -83,19 +87,41 @@ sender databases.
 sudo bash scripts/install-gateway.sh --reuse-existing
 ```
 
-This keeps the CDB path, state directory, gateway ID, broker credentials and
-refresh settings, updates `project_root`, regenerates the dedicated ACL/config
-from those settings, refreshes both systemd units and runs diagnostics.
+This preserves:
 
-`--reuse-existing` preserves an existing generated local-broker configuration.
-When it encounters a legacy external-broker TOML from an older project version,
-it preserves the gateway ID, CDB path, state directory and refresh interval but
-migrates the endpoint to `127.0.0.1:1883`, generates new local gateway/ioBroker
-credentials, backs up the old config and tells the operator to update ioBroker.
-The supported end state is always the local broker topology.
+- gateway ID;
+- CDB and project-state paths;
+- local broker credentials;
+- refresh interval;
+- BlueZ identity and sequence state.
 
-## Destructive reset
+It updates `project_root`, rebuilds the managed broker policy, refreshes both
+systemd units and runs diagnostics.
 
-The public installer does not expose a Mesh reset. Lower-level maintenance
-helpers retain explicit destructive reset switches for deliberate complete
-local reinitialisation. They are not update or missing-`.state/` recovery tools.
+A legacy external-broker configuration is migrated to the supported local-broker
+topology. The installer preserves the gateway/CDB/state/refresh settings,
+generates new local credentials and instructs the operator to update the
+matching ioBroker adapter instance.
+
+## Destructive reset boundary
+
+The public installer has no `--reset-mesh-state` option. Lower-level maintenance
+helpers retain explicit destructive reset functionality for deliberate complete
+local reinitialisation only. It is not an update mechanism and must not be used
+to recover missing `.state/` while the matching BlueZ databases still exist.
+
+## Validated reference run
+
+On 2026-07-16 the public installer was run on the target Raspberry Pi 3 after
+`.state/` had intentionally been removed while both BlueZ identities remained.
+It:
+
+- recovered both protected project identity files;
+- attached both identities without re-import or reset;
+- installed local Mosquitto and generated scoped credentials/ACLs;
+- started all three services;
+- connected the MQTT gateway and published two node definitions;
+- completed with `Doctor result: healthy`.
+
+The target run passed 124 offline tests and the static token-output scan before
+installation.

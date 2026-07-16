@@ -56,15 +56,14 @@ The normal command is:
 sudo bash scripts/install-gateway.sh
 ```
 
-No state is reset by default. An explicit reset is reserved for repairing deliberately selected inconsistent local BlueZ state through the lower-level maintenance helper:
+No state is reset by default. The public installer deliberately has no
+`--reset-mesh-state` option.
 
-```bash
-sudo bash ./scripts/setup-all.sh \
-    --iv-index 0 \
-    --reset-mesh-state
-```
-
-The CDB and offline tests complete before this reset occurs.
+Lower-level maintenance helpers retain a destructive reset for a deliberate
+complete local reinitialisation. It requires an independently verified IV Index
+and is not an update command or a way to repair a missing `.state/` directory
+when the matching BlueZ databases still exist. See **Destructive reset** below
+before considering it.
 
 ## Local state and secrets
 
@@ -424,6 +423,26 @@ are preserved, while new gateway/ioBroker MQTT credentials are generated. Use
 the newly printed settings in the ioBroker adapter.
 
 The lower-level `scripts/setup-all.sh` and `scripts/install-service.sh` helpers still support `--reset-mesh-state` for a deliberate complete local reinitialization. The option is intentionally destructive, is never implied by `scripts/install-gateway.sh`, and must not be used for routine updates or to recover a missing `.state/` directory while the corresponding BlueZ databases still exist.
+
+## Reference end-to-end validation
+
+The self-contained installation path was validated on real hardware on
+2026-07-16:
+
+- Raspberry Pi 3 with Debian 13 `trixie`, BlueZ 5.82 and internal `hci0`;
+- local Mosquitto installed and configured by `install-gateway.sh`;
+- two existing BlueZ identities with missing `.state/` safely adopted;
+- 124 offline gateway tests and the static token-output scan passed on target;
+- `sanlight-gateway doctor` reported every service and permission check healthy;
+- native adapter installed on a separate Raspberry Pi 4 with Node.js 22.15.0;
+- MQTT transport, gateway availability and protocol compatibility all true;
+- a read-only refresh completed with status `verified`;
+- nodes `0002` and `0003` were changed reversibly from 68% to 67%, verified by
+  Mesh readback and independently visible in the SANlight app, then restored to
+  68%.
+
+The addresses, names and percentages above belong only to the reference
+installation and are not defaults for another Mesh.
 
 ## Service operation
 

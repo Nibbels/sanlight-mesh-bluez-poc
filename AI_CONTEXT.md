@@ -287,8 +287,23 @@ Unit tests can prove syntax, parsing, policy and filesystem behaviour, but canno
 prove systemd, HCI ownership, D-Bus timing, RF behaviour, Mosquitto startup or
 end-to-end ioBroker operation. Hardware claims require the target Raspberry Pi.
 
-The previous external-broker runtime was hardware validated on 2026-07-15 with
-Mosquitto 2.0.11, two real lamps, retained-command safety, QoS 1 deduplication,
-TTL expiry, coalescing, rate limiting, blackout/restore, broker/gateway restart
-and full Pi reboot. The unified local-broker installer is a new productization
-change and must be target-host validated before its status is upgraded.
+Hardware validation history:
+
+- 2026-07-15: the earlier external-broker runtime was validated with two real
+  lamps, retained-command safety, QoS 1 deduplication, TTL expiry, coalescing,
+  rate limiting, blackout/restore, broker/gateway restart and full Pi reboot;
+- 2026-07-16: the supported self-contained local-broker topology was validated
+  on the target Raspberry Pi 3. The public installer adopted two intact BlueZ
+  identities whose project `.state/` had been removed, installed local
+  Mosquitto, created scoped credentials/ACLs, started all services and finished
+  with a healthy doctor report;
+- the native `ioBroker.sanlightmesh` adapter was installed on a separate
+  Raspberry Pi 4, connected to the gateway broker, reported MQTT/gateway/API
+  health, completed a verified read-only refresh and performed reversible
+  68% -> 67% -> 68% writes on both real nodes with independent SANlight-app
+  confirmation.
+
+The reference gateway run passed 124 offline tests and the static token-output
+scan. The adapter run passed TypeScript checking, eight protocol unit tests and
+package validation. Do not generalise these hardware claims to other SANlight
+firmware, Mesh layouts or network-security topologies without evidence.
