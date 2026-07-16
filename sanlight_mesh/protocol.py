@@ -5,6 +5,7 @@ This module has no D-Bus dependency and is safe to import in preflight checks.
 from __future__ import annotations
 
 import struct
+from dataclasses import dataclass
 
 from .constants import (
     PRIMARY_APP_INDEX,
@@ -110,6 +111,59 @@ def get_max_brightness_status_value(data: bytes) -> int:
             "SANlight GetMaxBrightness Status must contain exactly one value byte"
         )
     return validate_reported_max_brightness(parameters[0])
+
+
+@dataclass(frozen=True)
+class LiveStatus:
+    """Decoded read-only SANlight lamp time and effective brightness status.
+
+    ``brightness_percent_estimate`` is an empirical interpretation of the
+    vendor value. The raw value remains authoritative until the scale has been
+    validated across additional hardware and firmware versions.
+    """
+
+    lamp_time_ms: int
+    brightness_raw: int
+
+    def __post_init__(self) -> None:
+        if isinstance(self.lamp_time_ms, bool) or not isinstance(
+            self.lamp_time_ms, int
+        ):
+            raise ValueError("lamp time milliseconds must be an integer")
+        if not 0 <= self.lamp_time_ms <= 0xFFFFFFFF:
+            raise ValueError("lamp time milliseconds must fit in uint32")
+        if isinstance(self.brightness_raw, bool) or not isinstance(
+            self.brightness_raw, int
+        ):
+            raise ValueError("live brightness raw value must be an integer")
+        if not 0 <= self.brightness_raw <= 0xFFFF:
+            raise ValueError("live brightness raw value must fit in uint16")
+
+    @property
+    def lamp_clock(self) -> str:
+        return format_milliseconds_as_clock(self.lamp_time_ms)
+
+    @property
+    def brightness_percent_estimate(self) -> float:
+        return self.brightness_raw / 10.0
+
+
+def decode_uptime_brightness_status_parameters(parameters: bytes) -> LiveStatus:
+    if len(parameters) != 6:
+        raise ValueError(
+            "SANlight GetUptimeAndBrightness Status must contain exactly "
+            "six parameter bytes"
+        )
+    return LiveStatus(
+        lamp_time_ms=int.from_bytes(parameters[:4], "little"),
+        brightness_raw=int.from_bytes(parameters[4:6], "little"),
+    )
+
+
+def get_uptime_brightness_status_value(data: bytes) -> LiveStatus:
+    return decode_uptime_brightness_status_parameters(
+        get_uptime_brightness_status_parameters(data)
+    )
 
 
 def build_get_uptime_brightness_pdu() -> bytes:

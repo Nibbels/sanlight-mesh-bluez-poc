@@ -11,16 +11,23 @@ import os
 import re
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Mapping
 
 from .gateway_config import GatewayConfig
 from .gateway_protocol import GatewayCommand
+from .protocol import LiveStatus
 
 
 _GET_MAX_RE = re.compile(
     r"GET-MAX COMPLETE\. Node 0x([0-9A-F]{4}) reports MaxBrightness (\d+)%"
+)
+_GET_LIVE_RE = re.compile(
+    r"GET-LIVE COMPLETE\. Node 0x([0-9A-F]{4}) reports "
+    r"lampTimeMs=(\d+) lampClock=([0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}) "
+    r"liveBrightnessRaw=(\d+) "
+    r"liveBrightnessPercentEstimate=([0-9]+(?:\.[0-9]+)?)%\."
 )
 _SEQUENCE_RE = re.compile(
     r"sequenceNumber=(\d+) \(0x[0-9A-Fa-f]+\).*?sequenceRemaining=(\d+)",
@@ -53,6 +60,7 @@ class ExecutionResult:
     message: str
     reported: Mapping[str, int]
     details: Mapping[str, object]
+    live_reported: Mapping[str, LiveStatus] = field(default_factory=dict)
 
 
 class GatewayExecutionError(RuntimeError):
@@ -118,6 +126,21 @@ class CliCommandExecutor:
             return None
         return address, parsed
 
+    @staticmethod
+    def _parse_get_live(result: ProcessResult) -> tuple[str, LiveStatus] | None:
+        matches = _GET_LIVE_RE.findall(result.stdout)
+        if not matches:
+            return None
+        address, lamp_time_ms, lamp_clock, brightness_raw, percent_estimate = matches[-1]
+        try:
+            status = LiveStatus(int(lamp_time_ms), int(brightness_raw))
+        except ValueError:
+            return None
+        if status.lamp_clock != lamp_clock:
+            return None
+        if abs(status.brightness_percent_estimate - float(percent_estimate)) > 0.05:
+            return None
+        return address, status
 
     @staticmethod
     def _parse_reported_values(result: ProcessResult) -> dict[str, int]:
@@ -132,24 +155,43 @@ class CliCommandExecutor:
     def refresh(self, target: str) -> ExecutionResult:
         targets = self.node_addresses if target == "all" else (target,)
         reported: dict[str, int] = {}
-        errors: dict[str, str] = {}
+        live_reported: dict[str, LiveStatus] = {}
+        errors: dict[str, dict[str, str]] = {}
         for address in targets:
-            result = self._run(["get-max", address])
-            parsed = self._parse_get_max(result)
-            if result.exit_code == 0 and parsed is not None and parsed[0] == address:
-                reported[address] = parsed[1]
+            max_result = self._run(["get-max", address])
+            parsed_max = self._parse_get_max(max_result)
+            if (
+                max_result.exit_code == 0
+                and parsed_max is not None
+                and parsed_max[0] == address
+            ):
+                reported[address] = parsed_max[1]
             else:
-                errors[address] = result.summary
+                errors.setdefault(address, {})["maxBrightness"] = max_result.summary
+
+            live_result = self._run(["get-live", address])
+            parsed_live = self._parse_get_live(live_result)
+            if (
+                live_result.exit_code == 0
+                and parsed_live is not None
+                and parsed_live[0] == address
+            ):
+                live_reported[address] = parsed_live[1]
+            else:
+                errors.setdefault(address, {})["liveBrightness"] = live_result.summary
+
         ok = not errors
+        any_reported = bool(reported or live_reported)
         return ExecutionResult(
             ok=ok,
-            status="verified" if ok else "partial" if reported else "failed",
+            status="verified" if ok else "partial" if any_reported else "failed",
             message=(
-                "MaxBrightness state refreshed and verified."
+                "MaxBrightness and live lamp output refreshed and verified."
                 if ok
-                else "One or more MaxBrightness reads failed."
+                else "One or more read-only lamp status requests failed."
             ),
             reported=reported,
+            live_reported=live_reported,
             details={"errors": errors} if errors else {},
         )
 
@@ -161,6 +203,18 @@ class CliCommandExecutor:
             assert command.value is not None
             result = self._run(["set-max", command.target, str(command.value)])
             if result.exit_code == 0:
+                live_result = self._run(["get-live", command.target])
+                parsed_live = self._parse_get_live(live_result)
+                live_reported: dict[str, LiveStatus] = {}
+                details: dict[str, object] = {"exitCode": result.exit_code}
+                if (
+                    live_result.exit_code == 0
+                    and parsed_live is not None
+                    and parsed_live[0] == command.target
+                ):
+                    live_reported[command.target] = parsed_live[1]
+                else:
+                    details["liveError"] = live_result.summary
                 return ExecutionResult(
                     ok=True,
                     status="verified",
@@ -169,13 +223,15 @@ class CliCommandExecutor:
                         f"{command.value}% as requested."
                     ),
                     reported={command.target: command.value},
-                    details={"exitCode": result.exit_code},
+                    live_reported=live_reported,
+                    details=details,
                 )
             return ExecutionResult(
                 ok=False,
                 status="unconfirmed" if result.exit_code in (3, 4) else "failed",
                 message=result.summary,
                 reported={},
+                live_reported={},
                 details={"exitCode": result.exit_code},
             )
 
@@ -190,17 +246,19 @@ class CliCommandExecutor:
                     status="unconfirmed" if result.exit_code in (3, 4) else "failed",
                     message=result.summary,
                     reported={},
+                    live_reported={},
                     details={"exitCode": result.exit_code},
                 )
             expected = self.node_addresses if command.target == "all" else (command.target,)
             # CLI exit 0 is reached only after its own per-node GetMaxBrightness
-            # verification. Avoid a redundant second refresh and its Sequence Numbers.
+            # verification. Avoid a redundant second MaxBrightness refresh.
             reported = {address: 0 for address in expected}
             return ExecutionResult(
                 ok=True,
                 status="verified",
                 message="All selected nodes report 0% (off).",
                 reported=reported,
+                live_reported={},
                 details={"exitCode": result.exit_code},
             )
 
@@ -215,14 +273,19 @@ class CliCommandExecutor:
                     status="unconfirmed" if result.exit_code in (3, 4) else "failed",
                     message=result.summary,
                     reported={},
+                    live_reported={},
                     details={"exitCode": result.exit_code},
                 )
             reported = self._parse_reported_values(result)
             return ExecutionResult(
                 ok=True,
                 status="verified",
-                message="Latest blackout snapshot restored and verified by the CLI transaction engine.",
+                message=(
+                    "Latest blackout snapshot restored and verified by the CLI "
+                    "transaction engine."
+                ),
                 reported=reported,
+                live_reported={},
                 details={"exitCode": result.exit_code},
             )
 

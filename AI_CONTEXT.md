@@ -321,6 +321,13 @@ Hardware validation history:
   confirmation.
 
 The reference gateway run passed 124 offline tests and the static token-output
-scan. The adapter run passed TypeScript checking, eight protocol unit tests and
-package validation. Do not generalise these hardware claims to other SANlight
-firmware, Mesh layouts or network-security topologies without evidence.
+scan. The original adapter hardware-validation run passed TypeScript checking,
+eight protocol unit tests and package validation. The current live-brightness
+extension adds two protocol tests, bringing the adapter protocol suite to ten.
+Do not generalise these hardware claims to other SANlight firmware, Mesh layouts
+or network-security topologies without evidence.
+
+## Live brightness invariant
+
+Keep configured `maxBrightness` separate from `GetUptimeAndBrightness` live output.
+The raw value is authoritative; the `/10` percentage remains empirical.

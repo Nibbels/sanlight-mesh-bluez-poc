@@ -23,6 +23,7 @@ from .constants import (
     TARGET_DEFAULT_TTL,
 )
 from .protocol import (
+    LiveStatus,
     build_config_default_ttl_set_pdu,
     build_config_network_transmit_get_pdu,
     build_get_max_brightness_pdu,
@@ -33,6 +34,7 @@ from .protocol import (
     build_vendor_model_app_bind_pdu,
     config_default_ttl_status_value,
     decode_config_network_transmit_status,
+    decode_uptime_brightness_status_parameters,
     format_milliseconds_as_clock,
     get_max_brightness_status_value,
     get_uptime_brightness_status_parameters,
@@ -415,17 +417,38 @@ class SenderElement(dbus.service.Object):
             return
 
         if is_get_uptime_brightness_status(payload):
-            if (
-                self.runtime.args.command == "get-live"
-                and source_int != self.runtime.args.destination
-            ):
+            if self.runtime.args.command != "get-live":
                 print(
-                    f"Ignoring SANlight 0x0D status from unexpected source "
-                    f"0x{source_int:04X}."
+                    "Ignoring SANlight GetUptimeAndBrightness status because no "
+                    "get-live transaction is active."
                 )
                 return
+            try:
+                response_destination = int(destination)
+            except (TypeError, ValueError):
+                response_destination = None
+            reason = unicast_status_rejection_reason(
+                source=source_int,
+                key_index=int(key_index),
+                response_destination=response_destination,
+                requested_destination=self.runtime.args.destination,
+                expected_app_index=self.runtime.control.app_index,
+                sender_unicast=self.runtime.sender_unicast,
+                node_addresses=self.runtime.control.sanlight_nodes,
+            )
+            if reason is not None:
+                print(f"Ignoring unrelated SANlight 0x0D status: {reason}.")
+                return
             params = get_uptime_brightness_status_parameters(payload)
-            self.runtime.live_status = (source_int, params)
+            try:
+                status = decode_uptime_brightness_status_parameters(params)
+            except ValueError as exc:
+                print(
+                    "Ignoring malformed SANlight GetUptimeAndBrightness status "
+                    f"from 0x{source_int:04X}: {exc}; raw={payload.hex()}."
+                )
+                return
+            self.runtime.live_status = (source_int, status)
             self.runtime.finish_get_live()
 
     @dbus.service.method(MESH_ELEMENT_IFACE, in_signature="qbqay", out_signature="")
@@ -521,7 +544,7 @@ class BluezRuntime:
         self.batch_write_results: list[tuple[int, int]] = []
         self.blackout_snapshot_path: Path | None = None
         self.network_transmit_status: tuple[int, int, int, int] | None = None
-        self.live_status: tuple[int, bytes] | None = None
+        self.live_status: tuple[int, LiveStatus] | None = None
         self.live_attempt = 0
         self.live_max_attempts = 2
         self.uptime_targets: set[int] = set()
@@ -1244,17 +1267,15 @@ class BluezRuntime:
                 f"{self.live_max_attempts} attempts."
             )
             return
-        source, params = self.live_status
-        detail = f"raw parameters={params.hex()}"
-        if len(params) == 6:
-            uptime_raw = int.from_bytes(params[:4], "little")
-            brightness_raw = int.from_bytes(params[4:6], "little")
-            detail += (
-                f"; uint32_le[0:4]={uptime_raw} ms "
-                f"(~{format_milliseconds_as_clock(uptime_raw)}); "
-                f"uint16_le[4:6]={brightness_raw}"
-            )
-        self.finish(f"GET-LIVE COMPLETE. Status from 0x{source:04X}; {detail}.")
+        source, status = self.live_status
+        self.finish(
+            f"GET-LIVE COMPLETE. Node 0x{source:04X} reports "
+            f"lampTimeMs={status.lamp_time_ms} "
+            f"lampClock={status.lamp_clock} "
+            f"liveBrightnessRaw={status.brightness_raw} "
+            f"liveBrightnessPercentEstimate="
+            f"{status.brightness_percent_estimate:.1f}%."
+        )
 
     def resolve_clock_destinations(self) -> list[int]:
         destination = getattr(self.args, "destination", None)

@@ -152,38 +152,41 @@ class SanlightMqttGateway:
             self.result_topic(command_id), result, retain=False
         )
 
-    def publish_node_state(self, address: str, value: int) -> None:
-        payload = {
+    def publish_node_state(self, address: str, *, cached: bool = False) -> None:
+        state = self.store.get_node(address)
+        if state is None:
+            return
+        payload: dict[str, Any] = {
             "protocolVersion": PROTOCOL_VERSION,
             "address": address,
             "name": self.nodes[address],
-            "maxBrightness": value,
-            "off": value == 0,
+            "maxBrightness": state.max_brightness,
+            "off": state.max_brightness == 0,
             "verified": True,
-            "verifiedAt": isoformat_utc(utc_now()),
+            "verifiedAt": isoformat_utc(state.verified_at),
+            "liveVerified": state.live_status is not None,
         }
+        if cached:
+            payload["cached"] = True
+        if state.live_status is not None and state.live_verified_at is not None:
+            payload.update(
+                {
+                    "lampTimeMs": state.live_status.lamp_time_ms,
+                    "lampClock": state.live_status.lamp_clock,
+                    "liveBrightnessRaw": state.live_status.brightness_raw,
+                    "liveBrightnessPercentEstimate": (
+                        state.live_status.brightness_percent_estimate
+                    ),
+                    "liveVerifiedAt": isoformat_utc(state.live_verified_at),
+                }
+            )
         self._require_transport().publish_json(
             self.node_state_topic(address), payload, retain=True
         )
 
     def publish_cached_states(self) -> None:
         for address in self.nodes:
-            cached = self.store.get_node(address)
-            if cached is not None:
-                self._require_transport().publish_json(
-                    self.node_state_topic(address),
-                    {
-                        "protocolVersion": PROTOCOL_VERSION,
-                        "address": address,
-                        "name": self.nodes[address],
-                        "maxBrightness": cached.max_brightness,
-                        "off": cached.max_brightness == 0,
-                        "verified": True,
-                        "verifiedAt": isoformat_utc(cached.verified_at),
-                        "cached": True,
-                    },
-                    retain=True,
-                )
+            self.publish_node_state(address, cached=True)
 
     def publish_gateway_info(self) -> None:
         payload: dict[str, Any] = {
@@ -470,17 +473,59 @@ class SanlightMqttGateway:
                 execution = self.executor.execute(command)
                 if command.is_write:
                     self.last_write_monotonic = time.monotonic()
+
+                addresses_to_publish: set[str] = set()
                 for address, value in execution.reported.items():
                     if address in self.nodes:
                         self.store.update_node(address, value)
-                        try:
-                            self.publish_node_state(address, value)
-                        except Exception as exc:
-                            print(
-                                f"Verified state for {address} stored locally but MQTT "
-                                f"state publish failed: {exc}",
-                                file=sys.stderr,
-                            )
+                        addresses_to_publish.add(address)
+                for address, live_status in execution.live_reported.items():
+                    if address in self.nodes:
+                        self.store.update_live(address, live_status)
+                        addresses_to_publish.add(address)
+
+                if command.action == "refresh":
+                    expected_live = (
+                        tuple(self.nodes)
+                        if command.target == "all"
+                        else (command.target,)
+                    )
+                elif command.action == "restore-blackout" and execution.ok:
+                    # The restore CLI verifies MaxBrightness but does not read live
+                    # output. Invalidate every cached live value until the next
+                    # refresh, even if parsing the restored percentage summary is
+                    # incomplete.
+                    expected_live = tuple(self.nodes)
+                elif command.is_write:
+                    expected_live = tuple(execution.reported)
+                else:
+                    expected_live = ()
+                for address in expected_live:
+                    if address in self.nodes and address not in execution.live_reported:
+                        self.store.clear_live(address)
+                        addresses_to_publish.add(address)
+
+                for address in sorted(addresses_to_publish):
+                    try:
+                        self.publish_node_state(address)
+                    except Exception as exc:
+                        print(
+                            f"Verified state for {address} stored locally but MQTT "
+                            f"state publish failed: {exc}",
+                            file=sys.stderr,
+                        )
+
+                live_reported = {
+                    address: {
+                        "lampTimeMs": status.lamp_time_ms,
+                        "lampClock": status.lamp_clock,
+                        "liveBrightnessRaw": status.brightness_raw,
+                        "liveBrightnessPercentEstimate": (
+                            status.brightness_percent_estimate
+                        ),
+                    }
+                    for address, status in execution.live_reported.items()
+                }
                 result = make_result(
                     command,
                     ok=execution.ok,
@@ -488,6 +533,7 @@ class SanlightMqttGateway:
                     message=execution.message,
                     details={
                         "reported": dict(execution.reported),
+                        **({"liveReported": live_reported} if live_reported else {}),
                         **dict(execution.details),
                     },
                 )

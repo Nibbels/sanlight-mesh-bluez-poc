@@ -4,6 +4,11 @@ All notable changes to this community project are documented here. The project i
 
 ## Unreleased
 
+- Extend read-only MQTT node state with lamp time and current effective-output
+  data from `GetUptimeAndBrightness`; preserve the raw uint16 value, expose the
+  empirical `raw / 10` percentage estimate separately, and keep MaxBrightness as
+  the independent configured schedule scaling limit.
+
 - Standardize public documentation and service descriptions so the independent
   gateway is not presented as an official SANlight product; retain SANlight
   names only for compatibility and protocol references.

@@ -50,6 +50,36 @@ intentionally omitted.
 The addresses, labels and percentages above are facts about the reference Mesh,
 not generic defaults.
 
+## Pending live-output validation
+
+The MQTT/API and ioBroker states for `GetUptimeAndBrightness` are covered by
+offline parsing and contract tests, but the interpretation of
+`liveBrightnessRaw / 10` as a percentage still requires a controlled hardware
+comparison.
+
+Use one lamp while its daily profile is stable:
+
+1. Record `maxBrightness`, `liveBrightnessRaw`,
+   `liveBrightnessPercentEstimate`, `lampTimeMs` and `lampClock` after a manual
+   read-only refresh.
+2. Change MaxBrightness to a nearby safe value in `20..100` and wait for the
+   verified write plus its live-status read.
+3. Trigger another manual refresh and compare the raw live value before and
+   after the change.
+4. Restore the original MaxBrightness.
+5. Where available, record smart-plug power at the same points as an independent
+   relative comparison.
+
+Expected working hypothesis:
+
+```text
+liveBrightnessRaw ≈ daily-profile factor × MaxBrightness × 10
+```
+
+Do not treat the estimate as calibrated watts, photon flux or PPFD. Record the
+raw value even when the percentage hypothesis is later revised. Avoid rapid
+polling; each refresh sends Mesh queries and consumes sender Sequence Numbers.
+
 ## Earlier gateway safety validation — 2026-07-15
 
 The MQTT safety/runtime implementation was additionally validated for:

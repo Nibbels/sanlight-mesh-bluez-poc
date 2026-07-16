@@ -93,14 +93,26 @@ Normal MaxBrightness writes are restricted to `20..100%`. Zero is available
 only through the explicit blackout workflow. Commands are non-retained, expire
 quickly and are verified through lamp readback where supported.
 
+Read-only refresh keeps two different values separate:
+
+- `maxBrightness` is the configured schedule scaling limit;
+- `liveBrightnessRaw` is the lamp's current effective-output field from
+  `GetUptimeAndBrightness`.
+
+The additional `liveBrightnessPercentEstimate` is currently calculated as
+`liveBrightnessRaw / 10`. That scale is based on observed hardware behavior and
+must not be treated as calibrated power, photon flux or PPFD.
+
 The documented topology was validated end to end on real hardware on
 2026-07-16, including installation, state adoption, read-only refresh,
 reversible brightness writes, retained-command rejection, deduplication,
 expiry, coalescing, rate limiting and restart recovery. See
 [docs/MQTT_TEST_PLAN.md](docs/MQTT_TEST_PLAN.md) for the detailed record.
 
-This remains a pre-1.0 community project. Other SANlight firmware versions,
-Mesh layouts and network-security designs require their own validation.
+This remains a pre-1.0 community project. The new MQTT live-output fields still
+require the planned controlled hardware comparison; in particular, the `/10`
+percentage scale remains empirical. Other SANlight firmware versions, Mesh
+layouts and network-security designs require their own validation.
 
 ## Documentation
 

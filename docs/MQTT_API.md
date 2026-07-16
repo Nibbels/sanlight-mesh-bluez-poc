@@ -17,7 +17,7 @@ Examples below use the illustrative unicast address `1234`. Replace it with an a
 | `availability` | yes | `online` or Last-Will `offline` |
 | `gateway/info` | yes | gateway, nodes, traffic policy and sequence budget |
 | `nodes/<NODE>/meta` | yes | stable node metadata |
-| `nodes/<NODE>/state` | yes | last verified MaxBrightness state |
+| `nodes/<NODE>/state` | yes | last verified MaxBrightness and live lamp-output state |
 | `command` | **never** | ioBroker/client requests |
 | `result/<COMMAND_ID>` | no | final result for one request ID |
 
@@ -64,7 +64,11 @@ Rules:
 }
 ```
 
-Use target `all` to refresh every detected SANlight node. Refresh is read-only but still consumes Mesh Sequence Numbers.
+Use target `all` to refresh every detected SANlight node. For each target, the
+gateway reads both configured MaxBrightness and `GetUptimeAndBrightness` live
+status. Refresh is read-only but normally sends at least two Mesh application
+queries per lamp, plus any bounded retries, so it still consumes Sequence
+Numbers.
 
 ### Set MaxBrightness
 
@@ -79,7 +83,12 @@ Use target `all` to refresh every detected SANlight node. Refresh is read-only b
 }
 ```
 
-`value` is strictly `20..100`. Zero is rejected here and exists only in the explicit blackout workflow. A successful `verified` result means the hardened CLI read the configured percentage back from the lamp.
+`value` is strictly `20..100`. Zero is rejected here and exists only in the
+explicit blackout workflow. A successful `verified` result means the hardened
+CLI read the configured percentage back from the lamp. After that verification,
+the gateway also requests one live-status sample. Failure of this additional
+read does not make the already verified MaxBrightness write fail; instead,
+`liveVerified` becomes false and the result may include `details.liveError`.
 
 Separate brightness writes are subject to the persistent ten-second guard. A command whose TTL expires while waiting for that guard returns `expired` with `details.meshMessagesSent = 0`.
 
@@ -127,6 +136,14 @@ MQTT v1 deliberately accepts only `latest`; callers cannot supply local paths.
   "requested": 48,
   "details": {
     "reported": {"1234": 48},
+    "liveReported": {
+      "1234": {
+        "lampTimeMs": 61265168,
+        "lampClock": "17:01:05.168",
+        "liveBrightnessRaw": 461,
+        "liveBrightnessPercentEstimate": 46.1
+      }
+    },
     "exitCode": 0
   },
   "timestamp": "2026-07-15T20:30:04Z"
@@ -160,14 +177,39 @@ When a completed QoS 1 command ID is delivered again, the gateway republishes th
   "protocolVersion": 1,
   "address": "1234",
   "name": "Example lamp",
-  "maxBrightness": 48,
+  "maxBrightness": 68,
   "off": false,
   "verified": true,
-  "verifiedAt": "2026-07-15T20:30:04Z"
+  "verifiedAt": "2026-07-16T20:30:04Z",
+  "liveVerified": true,
+  "lampTimeMs": 61265168,
+  "lampClock": "17:01:05.168",
+  "liveBrightnessRaw": 461,
+  "liveBrightnessPercentEstimate": 46.1,
+  "liveVerifiedAt": "2026-07-16T20:30:05Z"
 }
 ```
 
-Only verified values update retained node state. `maxBrightness: 0` with `off: true` is valid only after a verified explicit blackout or an external change observed by refresh.
+`maxBrightness` and `liveBrightnessRaw` describe different things:
+
+- `maxBrightness` is the configured daily-profile scaling limit;
+- `liveBrightnessRaw` is the current effective-output field returned by the lamp;
+- `liveBrightnessPercentEstimate` is the empirical calculation `raw / 10`.
+
+The estimate is useful for relative automation and comparison, but it is not a
+calibrated watt, photon-flux or PPFD measurement. Keep the raw value available
+until the scale is confirmed across more hardware and firmware versions.
+
+`liveVerified=false` means no valid current live-status sample accompanied the
+latest update. In that case the live value fields are omitted. Older MQTT API v1
+gateways may omit `liveVerified` entirely; clients should interpret that as live
+status unavailable.
+
+Only verified values update retained node state. `maxBrightness: 0` with
+`off: true` is valid only after a verified explicit blackout or an external
+change observed by refresh. Blackout and restore verify MaxBrightness but do not
+perform a live-status read, so they invalidate the retained live sample until the
+next refresh.
 
 ## Gateway information
 

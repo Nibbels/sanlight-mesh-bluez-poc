@@ -179,13 +179,38 @@ sudo python3 sanlight_canonical_sender_poc.py \
 
 The first column of the lamp table is named `NODE_ADDRESS`. It is the four-digit unicast address used by commands such as `get-live`. Addresses are installation-specific. Group addresses are listed separately and cannot be used by read-only node commands.
 
-Read lamp time and the still-partially-understood brightness-related raw field from one unicast lamp node:
+Read lamp time and the current effective-output field from one unicast lamp node:
 
 ```bash
 sudo python3 sanlight_canonical_sender_poc.py \
     --cdb private/SANlightMesh.json \
     get-live NODE_ADDRESS
 ```
+
+A valid six-byte `GetUptimeAndBrightness` status is decoded as:
+
+```text
+uint32 little-endian bytes 0..3 = lamp time in milliseconds
+uint16 little-endian bytes 4..5 = current live brightness raw value
+```
+
+The CLI prints both the raw values and derived display fields, for example:
+
+```text
+lampTimeMs=61265168
+lampClock=17:01:05.168
+liveBrightnessRaw=461
+liveBrightnessPercentEstimate=46.1%
+```
+
+`liveBrightnessRaw` is the authoritative decoded vendor value. The percentage
+estimate is currently `raw / 10`, based on observed values and expected schedule
+scaling behavior. This interpretation is not yet a calibrated measurement and
+must not be presented as electrical watts, photons per second or PPFD.
+
+This live value is different from `MaxBrightness`: MaxBrightness is the configured
+scaling limit for the lamp's daily profile, while the live field indicates the
+output level the lamp currently reports after its profile and scaling are applied.
 
 Read the configured MaxBrightness percentage from one unicast lamp node:
 
@@ -235,11 +260,12 @@ values per IV Index). This includes read-only queries such as `get-max` and
 same PDU are handled by the Mesh stack, but each new application query or retry
 is a new message.
 
-A successfully verified unicast `set-max` normally uses at least two outgoing
-messages: the write and its GetMaxBrightness readback. With both bounded retries,
-it can use up to four. At one verified update every second, the complete 24-bit
-space would last only about **49 to 97 days** from zero. A 90-day cultivation run
-at that rate can therefore exhaust the sender even without a software bug. The
+A successfully verified unicast `set-max` uses the write and its
+GetMaxBrightness readback, followed by one read-only live-status request for the
+retained effective-output state. Retries can consume additional Sequence Numbers.
+A normal MQTT refresh also performs both `get-max` and `get-live` for each target.
+At one multi-message update every second, a 90-day cultivation run can therefore
+exhaust the sender even without a software bug. The
 Bluetooth SIG specifies IV Update as the standards-based way to obtain a fresh
 sequence space, but this project does not initiate or automate a network-wide IV
 Update. See the [Bluetooth Mesh Security Overview](https://www.bluetooth.com/wp-content/uploads/2025/04/MeshSecurityOverview_INFO_v1.0-1.pdf).
@@ -251,8 +277,8 @@ Project policy:
 - do not poll `get-max` or `get-live` every second;
 - for routine MaxBrightness automation, use **one minute or slower** unless a
   carefully reviewed use case requires otherwise;
-- a one-minute verified update cadence over 90 days consumes roughly 259,200 to
-  518,400 sequence values (about 1.5% to 3.1% of the full space);
+- a one-minute verified update cadence over 90 days consumes roughly 388,800 to
+  777,600 sequence values (about 2.3% to 4.6% of the full space);
 - the CLI enforces a persistent **10-second minimum interval** between separate
   brightness-changing commands. This is an emergency guard against accidental
   tight loops, not a recommended control cadence;

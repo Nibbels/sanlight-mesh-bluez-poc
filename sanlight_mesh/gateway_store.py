@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .gateway_protocol import isoformat_utc, parse_timestamp, utc_now
+from .protocol import LiveStatus
 from .state import read_state, write_state
 
 
@@ -17,6 +18,8 @@ STORE_VERSION = 1
 class CachedNodeState:
     max_brightness: int
     verified_at: datetime
+    live_status: LiveStatus | None = None
+    live_verified_at: datetime | None = None
 
 
 class GatewayStore:
@@ -141,11 +144,50 @@ class GatewayStore:
         if not 0 <= max_brightness <= 100:
             raise ValueError("cached MaxBrightness must be between 0 and 100")
         current = now or utc_now()
-        self.nodes[address] = {
-            "maxBrightness": max_brightness,
-            "verifiedAt": isoformat_utc(current),
-        }
+        existing = self.nodes.get(address)
+        record = dict(existing) if isinstance(existing, dict) else {}
+        record.update(
+            {
+                "maxBrightness": max_brightness,
+                "verifiedAt": isoformat_utc(current),
+            }
+        )
+        self.nodes[address] = record
         self.save()
+
+    def update_live(
+        self,
+        address: str,
+        status: LiveStatus,
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        current = now or utc_now()
+        existing = self.nodes.get(address)
+        record = dict(existing) if isinstance(existing, dict) else {}
+        record.update(
+            {
+                "lampTimeMs": status.lamp_time_ms,
+                "liveBrightnessRaw": status.brightness_raw,
+                "liveVerifiedAt": isoformat_utc(current),
+            }
+        )
+        self.nodes[address] = record
+        self.save()
+
+    def clear_live(self, address: str) -> None:
+        existing = self.nodes.get(address)
+        if not isinstance(existing, dict):
+            return
+        record = dict(existing)
+        changed = False
+        for key in ("lampTimeMs", "liveBrightnessRaw", "liveVerifiedAt"):
+            if key in record:
+                record.pop(key)
+                changed = True
+        if changed:
+            self.nodes[address] = record
+            self.save()
 
     def get_node(self, address: str) -> CachedNodeState | None:
         record = self.nodes.get(address)
@@ -158,7 +200,34 @@ class GatewayStore:
             verified_at = parse_timestamp(record.get("verifiedAt"), "verifiedAt")
         except Exception:
             return None
-        return CachedNodeState(value, verified_at)
+
+        live_status: LiveStatus | None = None
+        live_verified_at: datetime | None = None
+        lamp_time_ms = record.get("lampTimeMs")
+        brightness_raw = record.get("liveBrightnessRaw")
+        if (
+            not isinstance(lamp_time_ms, bool)
+            and isinstance(lamp_time_ms, int)
+            and 0 <= lamp_time_ms <= 0xFFFFFFFF
+            and not isinstance(brightness_raw, bool)
+            and isinstance(brightness_raw, int)
+            and 0 <= brightness_raw <= 0xFFFF
+        ):
+            try:
+                live_verified_at = parse_timestamp(
+                    record.get("liveVerifiedAt"), "liveVerifiedAt"
+                )
+            except Exception:
+                live_verified_at = None
+            if live_verified_at is not None:
+                live_status = LiveStatus(lamp_time_ms, brightness_raw)
+
+        return CachedNodeState(
+            value,
+            verified_at,
+            live_status=live_status,
+            live_verified_at=live_verified_at,
+        )
 
     def node_is_fresh(
         self,
