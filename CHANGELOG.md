@@ -4,6 +4,8 @@ All notable changes to this community project are documented here. The project i
 
 ## Unreleased
 
+- Simplify the public README and first-time setup path, remove duplicated adapter configuration, and clarify the gateway-to-adapter handoff.
+- Add the MIT license used by the companion adapter repository.
 - Rename the repository to `sanlight-mesh-mqtt-gateway`.
 - Define the two-repository architecture with `ioBroker.sanlightmesh` as the companion adapter.
 - Add the interactive gateway configuration and installation wrapper.
