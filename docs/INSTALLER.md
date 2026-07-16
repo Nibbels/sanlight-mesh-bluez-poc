@@ -9,7 +9,8 @@ users should not assemble the installation from those scripts.
 
 ## What the installer owns
 
-The installer prepares one self-contained SANlight gateway Pi:
+The installer prepares one self-contained gateway Pi for a SANlight Mesh
+installation:
 
 1. resolves and protects the private CDB, state and configuration paths;
 2. optionally reads an existing configuration in `--reuse-existing` mode;

@@ -429,7 +429,7 @@ sudo raspi-config
 The normal product topology is self-contained on the lamp-side Raspberry Pi:
 
 ```text
-SANlight lamps <-Bluetooth Mesh-> SANlight gateway Pi
+SANlight lamps <-Bluetooth Mesh-> gateway Pi (this project)
                                    BlueZ + gateway + Mosquitto
                                                        ^
                                                        | trusted-LAN MQTT
@@ -437,7 +437,7 @@ SANlight lamps <-Bluetooth Mesh-> SANlight gateway Pi
                                                 ioBroker adapter
 ```
 
-`scripts/install-gateway.sh` installs and configures Mosquitto on the same Raspberry Pi as the SANlight gateway. The gateway client always uses `127.0.0.1:1883`. There is no second broker-host installer and no broker host, username, password or TLS prompt in the normal setup.
+`scripts/install-gateway.sh` installs and configures Mosquitto on the gateway Pi. The gateway client always uses `127.0.0.1:1883`. There is no second broker-host installer and no broker host, username, password or TLS prompt in the normal setup.
 
 The installer creates:
 
@@ -455,12 +455,12 @@ The default listener is reachable through the Raspberry Pi's IPv4 LAN interfaces
 
 Configure the native ioBroker adapter with:
 
-- broker host: a stable LAN IP or hostname of the SANlight gateway Pi;
+- broker host: a stable LAN IP or hostname of the gateway Pi;
 - broker port: `1883`;
 - username and password printed/referenced by the installer;
 - the exact gateway ID selected during installation.
 
-One adapter instance manages one physical gateway. Multiple SANlight gateway Pis are supported by creating multiple ioBroker adapter instances, for example `sanlightmesh.0`, `sanlightmesh.1` and `sanlightmesh.2`. Each instance connects to its corresponding gateway Pi and exact gateway ID; instances must not discover or combine all gateways through a wildcard subscription.
+One adapter instance manages one physical gateway. Multiple gateway Pis for separate SANlight Mesh installations are supported by creating multiple ioBroker adapter instances, for example `sanlightmesh.0`, `sanlightmesh.1` and `sanlightmesh.2`. Each instance connects to its corresponding gateway Pi and exact gateway ID; instances must not discover or combine all gateways through a wildcard subscription.
 
 Detailed settings are in [docs/IOBROKER_INTEGRATION.md](docs/IOBROKER_INTEGRATION.md).
 

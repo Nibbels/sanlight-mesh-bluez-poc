@@ -4,6 +4,9 @@ All notable changes to this community project are documented here. The project i
 
 ## Unreleased
 
+- Standardize public documentation and service descriptions so the independent
+  gateway is not presented as an official SANlight product; retain SANlight
+  names only for compatibility and protocol references.
 - Make IV Index installation failures actionable: clarify that normal installs require no manual value, document trusted sources and exact recovery steps, and improve the CLI error without changing identity selection or Mesh state behavior.
 - Clarify the SANlight app App-ID, CDB provisioner identity, Mesh source address, AppKey index and AID terminology without changing gateway behavior.
 - Simplify the public README and first-time setup path, remove duplicated adapter configuration, and clarify the gateway-to-adapter handoff.

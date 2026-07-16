@@ -1,13 +1,13 @@
 # MQTT gateway and local broker
 
-The SANlight Raspberry Pi is a self-contained edge gateway:
+The gateway Raspberry Pi is a self-contained edge gateway for SANlight Mesh:
 
 ```text
 ioBroker.sanlightmesh
       |
       | MQTT over a trusted LAN
       v
-SANlight gateway Raspberry Pi
+Gateway Raspberry Pi (this project)
   mosquitto.service
   sanlight-mqtt-gateway.service
   sanlight-meshd-generic.service

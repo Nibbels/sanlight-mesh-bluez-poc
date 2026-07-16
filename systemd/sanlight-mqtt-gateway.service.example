@@ -1,5 +1,5 @@
 [Unit]
-Description=SANlight Bluetooth Mesh MQTT edge gateway
+Description=Independent MQTT gateway for SANlight Bluetooth Mesh
 Documentation=https://github.com/Nibbels/sanlight-mesh-mqtt-gateway/blob/main/docs/MQTT_GATEWAY.md
 After=network-online.target mosquitto.service sanlight-meshd-generic.service
 Wants=network-online.target

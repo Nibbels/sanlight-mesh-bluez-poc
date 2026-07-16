@@ -65,8 +65,8 @@ Review the generated report before sharing it.
 ## Prompt template
 
 ```text
-I am troubleshooting the SANlight Mesh MQTT Gateway. Use the attached
-CHATGPT_SUPPORT.md and diagnostics report. Do not request or reveal Mesh keys,
+I am troubleshooting the independent MQTT gateway for SANlight Mesh. Use the
+attached CHATGPT_SUPPORT.md and diagnostics report. Do not request or reveal Mesh keys,
 passwords, private CDB/state files or BlueZ tokens. Give exactly one read-only
 step at a time. Do not issue brightness, blackout, restore or clock commands
 unless I explicitly approve a controlled hardware test.

@@ -31,11 +31,12 @@ backend without a separate hardware validation.
 
 ## Product topology and ioBroker instances
 
-The normal installer puts Mosquitto on the same Pi as BlueZ and the SANlight
-gateway. The gateway client connects to `127.0.0.1:1883`. ioBroker connects to a
+The normal installer puts Mosquitto on the same Pi as BlueZ and the gateway
+service. The gateway client connects to `127.0.0.1:1883`. ioBroker connects to a
 stable LAN IP/hostname of that Pi.
 
-Multiple physical SANlight gateway Pis are intentional. The adapter contract is:
+Multiple physical gateway Pis for separate SANlight Mesh installations are
+intentional. The adapter contract is:
 
 - one `ioBroker.sanlightmesh` instance manages exactly one gateway ID;
 - one instance has one broker connection;

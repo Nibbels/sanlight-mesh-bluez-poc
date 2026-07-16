@@ -5,12 +5,12 @@ The supported ioBroker integration is the native
 adapter.
 
 The gateway installer already provides the authenticated Mosquitto broker on
-the SANlight gateway Pi. The ioBroker host does not need BlueZ, the private
+the gateway Pi. The ioBroker host does not need BlueZ, the private
 SANlight export, SSH access or the generic ioBroker MQTT adapter.
 
 ```text
-SANlight gateway Pi
-  BlueZ + SANlight gateway + Mosquitto :1883
+Gateway Pi (this project)
+  BlueZ + gateway service + Mosquitto :1883
                      ^
                      | trusted LAN
                      |

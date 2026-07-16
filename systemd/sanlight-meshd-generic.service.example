@@ -1,5 +1,5 @@
 [Unit]
-Description=SANlight BlueZ Mesh daemon using generic HCI
+Description=Independent BlueZ Mesh daemon for SANlight device compatibility
 Documentation=https://github.com/Nibbels/sanlight-mesh-bluez-poc
 After=dbus.service sys-subsystem-bluetooth-devices-hci0.device
 Wants=dbus.service sys-subsystem-bluetooth-devices-hci0.device

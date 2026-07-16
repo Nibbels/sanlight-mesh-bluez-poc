@@ -1,4 +1,4 @@
-# SANlight Mesh MQTT Gateway
+# MQTT Gateway for SANlight Mesh
 
 A self-contained Raspberry Pi gateway for controlling SANlight EVO Bluetooth
 Mesh dimmers through a local MQTT API.
@@ -8,7 +8,10 @@ engine, an authenticated Mosquitto broker and the always-on MQTT service. The
 companion [`ioBroker.sanlightmesh`](https://github.com/Nibbels/ioBroker.sanlightmesh)
 adapter connects over the local network. Mesh keys never leave the gateway Pi.
 
-> Unofficial community project. Not affiliated with or endorsed by SANlight GmbH.
+> Independent community project for compatibility with SANlight Mesh. Not
+> affiliated with, endorsed by, or an official product of SANlight GmbH. The
+> name `SANlight` is used only to identify compatible products, the official app
+> and the associated Mesh network.
 
 ## Architecture
 
@@ -17,7 +20,7 @@ SANlight lamps
       |
       | Bluetooth Mesh
       v
-SANlight gateway Raspberry Pi
+Gateway Raspberry Pi (this project)
   BlueZ + gateway + Mosquitto
       ^
       | authenticated MQTT on a trusted LAN

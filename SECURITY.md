@@ -7,7 +7,7 @@ branch and the most recent tagged release once releases are published.
 
 ## Secret boundary
 
-The SANlight gateway host is the only component that may possess:
+The gateway host is the only component that may possess:
 
 - the private SANlight CDB;
 - NetKeys, AppKeys and DeviceKeys;
@@ -21,7 +21,7 @@ configured gateway ID. It must never receive Mesh keys or BlueZ state.
 
 ## MQTT broker
 
-The normal installer runs Mosquitto on the SANlight gateway Pi with:
+The normal installer runs Mosquitto on the gateway Pi with:
 
 - anonymous access disabled;
 - random separate gateway and ioBroker credentials;

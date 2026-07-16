@@ -19,7 +19,7 @@ Owns the lamp-side appliance:
 
 Owns the ioBroker integration:
 
-- connection to one configured SANlight gateway broker per adapter instance;
+- connection to one configured gateway broker per adapter instance;
 - exact selection of one gateway ID per instance;
 - Admin UI and encrypted broker password storage;
 - typed gateway and lamp objects;
@@ -34,7 +34,7 @@ gateway or open BlueZ D-Bus connections.
 ## Default topology
 
 ```text
-Lamps --Bluetooth Mesh--> SANlight gateway Pi
+Lamps --Bluetooth Mesh--> gateway Pi (this project)
                            BlueZ + gateway + Mosquitto
                                       ^
                                       | MQTT over trusted LAN
