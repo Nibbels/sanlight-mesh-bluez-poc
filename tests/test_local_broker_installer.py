@@ -10,6 +10,7 @@ import textwrap
 import unittest
 from pathlib import Path
 
+
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "scripts" / "install-gateway.sh"
 PASSWORD_HELPER = ROOT / "scripts" / "mosquitto-password.py"
@@ -18,6 +19,7 @@ PASSWORD_HELPER = ROOT / "scripts" / "mosquitto-password.py"
 class LocalBrokerInstallerTest(unittest.TestCase):
     def test_public_installer_owns_local_broker_setup(self) -> None:
         text = INSTALLER.read_text(encoding="utf-8")
+
         self.assertIn("mosquitto mosquitto-clients", text)
         self.assertIn('mqtt_host="127.0.0.1"', text)
         self.assertIn("/etc/mosquitto/conf.d/sanlight-mesh-mqtt-gateway.conf", text)
@@ -35,6 +37,7 @@ class LocalBrokerInstallerTest(unittest.TestCase):
     def test_acl_is_scoped_to_one_gateway(self) -> None:
         text = INSTALLER.read_text(encoding="utf-8")
         root = "sanlightmesh/v1/${gateway_id}"
+
         self.assertIn(f"topic read {root}/command", text)
         self.assertIn(f"topic write {root}/command", text)
         self.assertIn(f"topic read {root}/availability", text)
@@ -46,6 +49,7 @@ class LocalBrokerInstallerTest(unittest.TestCase):
 
     def test_broker_files_are_staged_and_restored_on_failure(self) -> None:
         text = INSTALLER.read_text(encoding="utf-8")
+
         self.assertIn("BROKER_STAGE=", text)
         self.assertIn("restore_previous_broker_files", text)
         self.assertIn("fail_and_restore_broker", text)
@@ -58,10 +62,12 @@ class LocalBrokerInstallerTest(unittest.TestCase):
             encoding="utf-8"
         )
         combined = setup + "\n" + integration
+
         self.assertIn("sudo bash scripts/install-gateway.sh", setup)
         self.assertIn("https://github.com/Nibbels/ioBroker.sanlightmesh", combined)
-        self.assertIn("sanlightmesh.0", integration)
-        self.assertIn("sanlightmesh.1", integration)
+        self.assertIn("one sanlightmesh instance per gateway Pi", integration)
+        self.assertIn("one exact gateway ID", integration)
+        self.assertIn("another adapter instance", integration)
         self.assertNotIn("install-mosquitto-broker.sh", combined)
         self.assertIn("generic ioBroker MQTT adapter is not required", setup)
 
@@ -74,7 +80,7 @@ class LocalBrokerInstallerTest(unittest.TestCase):
     def test_password_helper_does_not_put_secret_in_argv(self) -> None:
         helper = PASSWORD_HELPER.read_text(encoding="utf-8")
         self.assertIn("pty.fork()", helper)
-        self.assertIn('secret_file', helper)
+        self.assertIn("secret_file", helper)
         self.assertNotIn('argv.extend([str(args.password_db), args.username,', helper)
 
     def test_password_helper_drives_interactive_program(self) -> None:
@@ -106,6 +112,7 @@ class LocalBrokerInstallerTest(unittest.TestCase):
                 encoding="utf-8",
             )
             fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+
             secret = root / "secret.txt"
             secret.write_text("not-in-argv\n", encoding="utf-8")
             os.chmod(secret, 0o600)
