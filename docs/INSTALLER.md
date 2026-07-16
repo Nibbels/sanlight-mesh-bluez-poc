@@ -36,8 +36,10 @@ A new installation asks only for deployment-specific values:
 - gateway ID;
 - read-only refresh interval.
 
-CDB path, project state path, App-ID 1, App-ID 2, local broker endpoint and
-service names are product invariants rather than normal user choices.
+CDB path, project state path, the CDB-derived control and canonical-sender
+identities, local broker endpoint and service names are product invariants rather
+than normal user choices. The SANlight app's App-ID labels must not be confused
+with Bluetooth Mesh AppKey indexes; see [Detailed instructions](../INSTRUCTIONS.md#sanlight-app-id-is-not-a-bluetooth-mesh-appkey-index).
 
 ## Local broker policy
 

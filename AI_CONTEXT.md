@@ -69,8 +69,9 @@ Never print, commit, publish or paste:
 - `/etc/sanlight-mesh-mqtt-gateway/iobroker-mqtt-password.txt`;
 - Mosquitto password databases or broker credentials.
 
-Safe diagnostics may contain Mesh UUID, provisioner UUID/name, App-ID, unicast
-addresses, group names, node names, opcodes and access PDUs. State writes remain
+Safe diagnostics may contain Mesh UUID, provisioner UUID/name, the CDB-derived
+SANlight App-ID relationship, unicast addresses, group names, node names, opcodes
+and access PDUs. State writes remain
 atomic. `.state/` is mode `0700`; JSON and clear-text password files are mode
 `0600`.
 
@@ -152,14 +153,29 @@ explicit destructive reset only for deliberate maintenance.
 
 ## CDB identity model
 
-Default identities are loaded by node name:
+Default identities are loaded by CDB node name:
 
-- control App-ID 1: `SANlight Provisioner 1`, typically unicast `0x2400`;
-- canonical sender App-ID 2: `SANlight Provisioner 2`, typically `0x2800`.
+- control identity: `SANlight Provisioner 1`;
+- canonical sender identity: `SANlight Provisioner 2`.
 
-Addresses are CDB-derived and must not be hard-coded as universal. Both
-identities share Mesh UUID, primary NetKey and AppKey material, but use distinct
-provisioner UUIDs and unicast addresses.
+The SANlight smartphone app's proprietary **App-ID** setting appears to select
+one of these controller/provisioner identities. In the validated export, App-ID
+1 mapped to `SANlight Provisioner 1` at `0x2400`, while App-ID 2 mapped to
+`SANlight Provisioner 2` at `0x2800`. The phone used App-ID 1 and the gateway's
+proven command sender used the separate App-ID 2 identity.
+
+Treat this as an observed mapping, not a universal address formula. Identity
+names, UUIDs, DeviceKeys and unicast addresses must always be derived and
+validated from the CDB. Do not infer App-ID 3 through 16 addresses. The current
+historical CLI selectors are `0..15`, where `0` means `nRF Mesh Provisioner`;
+they do not exactly mirror the app's visible `1..16` list. The supported
+installer uses 1 and 2 only. Only one active controller may own a local identity
+and its sequence state.
+
+SANlight App-ID is not Bluetooth Mesh AppKey index or AID. Both local identities
+share Mesh UUID, primary NetKey and AppKey material; the SANlight vendor model is
+bound to Bluetooth Mesh AppKey index `0`. The identities still use distinct
+provisioner UUIDs and unicast/source addresses.
 
 A SANlight lamp node is detected only when node `cid` is `0A8B` and an element
 contains vendor model `0A8B0001`.

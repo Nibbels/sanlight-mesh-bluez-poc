@@ -2,12 +2,43 @@
 
 ## Scope and safety model
 
-The project imports two provisioner identities from the private SANlight CDB:
+The project imports two local Bluetooth Mesh identities from nodes in the private SANlight CDB:
 
-- App-ID 1: local Configuration Client
-- App-ID 2: canonical sender with SIG Configuration Client and SANlight vendor model `0x0A8B/0x0001`
+- control identity: `SANlight Provisioner 1`;
+- canonical sender identity: `SANlight Provisioner 2`, with a SIG Configuration Client and the SANlight vendor model `0x0A8B/0x0001`.
 
-The local setup configures BlueZ state, imports NetKey/AppKey material, binds AppKey 0 to the sender vendor model and sets sender Default TTL 5. It does **not** send a lamp time or brightness command.
+In the validated export, these identities used unicast/source addresses `0x2400` and `0x2800` respectively. They are controller addresses, not lamp addresses. The addresses are read from `SANlightMesh.json` and must not be treated as universal constants.
+
+### SANlight App-ID is not a Bluetooth Mesh AppKey index
+
+The SANlight smartphone app has a proprietary setting named **App-ID**. Its own help text says that each device should use a different App-ID when the app is installed on multiple devices, because two devices using the same App-ID cannot both control the mesh.
+
+In the tested mesh, the observed relationship was:
+
+| SANlight app setting | CDB node identity | Mesh source address |
+|---|---|---|
+| App-ID 1 | `SANlight Provisioner 1` | `0x2400` |
+| App-ID 2 | `SANlight Provisioner 2` | `0x2800` |
+
+This is an observed mapping from the tested `SANlightMesh.json`, not a documented formula for every installation. Do not derive addresses for App-ID 3 through 16 or assume that every export contains the same identities. The CDB node name, UUID, DeviceKey and unicast address remain the source of truth.
+
+The CLI option names `--control-app-id` and `--sender-app-id` are historical CDB identity selectors. Selector `0` means `nRF Mesh Provisioner`; selectors `1..15` mean `SANlight Provisioner N`. This does not mirror the app's visible `1..16` list exactly. The supported installer uses selectors 1 and 2 only; App-ID 16 and any further address mapping remain unvalidated.
+
+In the tested setup, the phone app was configured for App-ID 1 and the gateway's proven command sender was the separate App-ID 2 / `0x2800` identity. Keeping them separate avoids a source-address and sequence-state collision. Only one active controller may use a particular local identity and its sequence state.
+
+Do not confuse these terms:
+
+- **SANlight App-ID:** app-side controller/provisioner identity selector;
+- **Bluetooth Mesh AppKey index:** cryptographic application-key binding; the SANlight vendor model uses AppKey index `0` in this project;
+- **Bluetooth Mesh AID:** a short identifier derived from an AppKey and carried in encrypted transport; it is not the SANlight App-ID;
+- **lamp or group address:** the destination of a command, separate from the controller source address.
+
+<p align="center">
+  <img src="docs/sanlight_app_id_help.png" alt="SANlight app help explaining that each device needs a unique App-ID" width="320">
+</p>
+<p align="center"><em>SANlight app help for the App-ID setting.</em></p>
+
+The local setup configures BlueZ state, imports NetKey/AppKey material, binds Bluetooth Mesh AppKey index `0` to the sender vendor model and sets sender Default TTL 5. It does **not** send a lamp time or brightness command.
 
 The `set-max` command has two independent range checks. Only integer values `20..100` are accepted. `0`, `1..19`, negative values and values above `100` are rejected before D-Bus and again while building the access PDU.
 

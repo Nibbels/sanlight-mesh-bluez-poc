@@ -53,7 +53,9 @@ class CliError(RuntimeError):
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="SANlight canonical App-ID source via BlueZ Bluetooth Mesh"
+        description=(
+            "SANlight CDB-derived controller identities via BlueZ Bluetooth Mesh"
+        )
     )
     parser.add_argument(
         "--cdb",
@@ -67,7 +69,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=1,
         choices=range(0, 16),
         metavar="0..15",
-        help="CDB provisioner used as Configuration Client; default: 1",
+        help=(
+            "CDB identity selector: 0=nRF Mesh Provisioner, "
+            "N=SANlight Provisioner N; not an AppKey index; default: 1"
+        ),
     )
     parser.add_argument(
         "--sender-app-id",
@@ -75,7 +80,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=2,
         choices=range(0, 16),
         metavar="0..15",
-        help="CDB provisioner used as canonical source; default: 2",
+        help=(
+            "canonical CDB identity selector: 0=nRF Mesh Provisioner, "
+            "N=SANlight Provisioner N; not an AppKey index; default: 2"
+        ),
     )
     parser.add_argument(
         "--iv-index",

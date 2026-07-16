@@ -4,6 +4,7 @@ All notable changes to this community project are documented here. The project i
 
 ## Unreleased
 
+- Clarify the SANlight app App-ID, CDB provisioner identity, Mesh source address, AppKey index and AID terminology without changing gateway behavior.
 - Simplify the public README and first-time setup path, remove duplicated adapter configuration, and clarify the gateway-to-adapter handoff.
 - Add the MIT license used by the companion adapter repository.
 - Rename the repository to `sanlight-mesh-mqtt-gateway`.
