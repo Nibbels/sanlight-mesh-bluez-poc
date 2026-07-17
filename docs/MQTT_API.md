@@ -106,6 +106,8 @@ Separate brightness writes are subject to the persistent ten-second guard. A com
 
 Use target `all` to synchronize every lamp. The gateway samples its current local clock immediately before each sequential lamp write. This command simply copies the gateway's current local clock.
 
+On the validated two-lamp setup, restoring lamp power reset both lamp clocks to `00:00:00`. The gateway does not synchronize automatically after power loss; an MQTT client or operator must explicitly trigger `sync-clock`.
+
 ### Set arbitrary lamp clock
 
 ```json

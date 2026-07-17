@@ -23,16 +23,19 @@ scripts/release-archive.sh
 
 Without an argument, the script reads `VERSION`. It refuses a dirty worktree, uses `git archive`, verifies the archive listing and writes a SHA-256 file below `dist/`.
 
-## First public release checklist
+## Release checklist
 
-1. Confirm GitHub Actions is green on the release commit.
-2. Run `./scripts/run-tests.sh` on the gateway Pi.
-3. Run `sudo sanlight-gateway doctor` and one read-only refresh from ioBroker.
-4. Build the archive with `scripts/release-archive.sh`.
-5. Create the annotated tag `v0.2.0` on the exact tested commit.
-6. Create a GitHub release from that tag, paste `docs/RELEASE_NOTES_0.2.0.md`, and attach both files from `dist/`.
+1. Confirm the gateway and companion adapter use the intended MQTT API version.
+2. Confirm GitHub Actions is green on the exact release commit.
+3. Run `./scripts/run-tests.sh` on the gateway Pi.
+4. Run `sudo sanlight-gateway doctor` and one read-only refresh from ioBroker.
+5. Build the archive with `scripts/release-archive.sh`; the default version is read from `VERSION`.
+6. Create the annotated tag `v<version>` on the exact tested commit.
+7. Create a GitHub release from that tag, paste the matching `docs/RELEASE_NOTES_<version>.md`, and attach both files from `dist/`.
 
-The tag and release must be created only after the final commit is tested; do not move an existing release tag.
+The tag and release must be created only after the final commit is tested. Never
+move, delete and recreate, or otherwise repoint a published release tag; a later
+correction receives a new patch version.
 
 ## Update an installed gateway
 

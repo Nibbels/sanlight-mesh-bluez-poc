@@ -103,13 +103,16 @@ The additional `liveBrightnessPercentEstimate` is currently calculated as
 `liveBrightnessRaw / 10`. That scale is based on observed hardware behavior and
 must not be treated as calibrated power, photon flux or PPFD.
 
-The documented topology was validated end to end on real hardware on
-2026-07-16, including installation, state adoption, read-only refresh,
-reversible brightness writes, retained-command rejection, deduplication,
-expiry, coalescing, rate limiting and restart recovery. See
-[docs/MQTT_TEST_PLAN.md](docs/MQTT_TEST_PLAN.md) for the detailed record.
+The documented topology was validated end to end on real hardware from
+2026-07-16 through 2026-07-18, including installation, state adoption,
+read-only refresh, reversible brightness writes, retained-command rejection,
+deduplication, expiry, coalescing, rate limiting, restart recovery and the
+manual lamp-clock workflow. See [docs/MQTT_TEST_PLAN.md](docs/MQTT_TEST_PLAN.md)
+for the detailed record.
 
-Version `0.2.0` is the immutable released baseline. Clock control is being developed for `0.3.0`. The project remains pre-1.0, so coordinated compatibility changes are documented explicitly in both repositories.
+Version `0.3.0` is the current immutable release. The project remains pre-1.0,
+so coordinated compatibility changes are documented explicitly in both
+repositories.
 
 The read-only current-output percentage was additionally compared with the
 SANlight app on 2026-07-17: the gateway value `33.4%` appeared as the app's
@@ -121,7 +124,13 @@ require their own validation.
 
 ## Lamp-clock handling
 
-MQTT API v1 exposes the last observed lamp clock as whole seconds since local midnight plus `HH:MM:SS`. Explicit commands can copy the gateway Raspberry Pi's current local clock or set an arbitrary lamp time. Clock values are snapshots and are never synchronized automatically. See [docs/MQTT_API.md](docs/MQTT_API.md).
+MQTT API v1 exposes the last observed lamp clock as whole seconds since
+local midnight plus `HH:MM:SS`. Explicit commands can copy the gateway
+Raspberry Pi's current local clock or set an arbitrary lamp time. Clock values
+are snapshots and are never synchronized automatically. On the validated
+two-lamp setup, restoring lamp power reset both internal clocks to `00:00:00`;
+an explicit synchronization restored local time. See
+[docs/MQTT_API.md](docs/MQTT_API.md).
 
 ## Documentation
 

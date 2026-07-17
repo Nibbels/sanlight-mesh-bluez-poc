@@ -3,7 +3,7 @@
 This file records the hardware validation completed for the current product
 topology and the minimum checks required after future changes.
 
-## Validated reference topology — 2026-07-16
+## Validated reference topology — 2026-07-16 through 2026-07-18
 
 - Raspberry Pi 3 gateway host;
 - Raspberry Pi OS Lite 64-bit / Debian 13 `trixie`;
@@ -24,7 +24,7 @@ intentionally omitted.
 | Test                                             | Result                                                        |
 | ------------------------------------------------ | ------------------------------------------------------------- |
 | Gateway Python syntax and source scan            | passed on target                                              |
-| Gateway offline suite                            | 124 tests passed                                              |
+| Gateway offline suite                            | 144 tests passed                                              |
 | Existing BlueZ identities with missing `.state/` | both identities validated and recovered                       |
 | Identity attachment                              | control and canonical sender attached without re-import/reset |
 | Local Mosquitto installation                     | installed, enabled and listening on TCP 1883                  |
@@ -35,7 +35,7 @@ intentionally omitted.
 | `sanlight-gateway doctor`                        | every check passed; result `healthy`                          |
 | Native adapter package installation              | installed from corrected public-registry lockfile             |
 | Adapter runtime compatibility                    | validated with ioBroker esbuild 0.11.23 / Node.js 22.15.0     |
-| Adapter tests                                    | TypeScript check, 8 unit tests and package validation passed  |
+| Adapter tests                                    | TypeScript check, 15 unit tests and package validation passed |
 | MQTT transport health                            | `mqttConnected=true`                                          |
 | Gateway availability                             | `gatewayOnline=true`                                          |
 | API compatibility                                | `protocolCompatible=true`                                     |
@@ -46,6 +46,13 @@ intentionally omitted.
 | Reversible write node `0002`                     | 68% → 67% verified, app confirmed, restored to 68%            |
 | Reversible write node `0003`                     | 68% → 67% verified, app confirmed, restored to 68%            |
 | Final reference state                            | both lamps restored to 68%                                    |
+| Single-lamp clock synchronization                | verified write/readback and fresh independent refresh         |
+| Single-lamp arbitrary clock target               | verified with elapsed-time progression                        |
+| All-lamp clock synchronization                   | both nodes verified with sequential per-lamp outcomes         |
+| All-lamp arbitrary clock target                  | both nodes verified with elapsed-time compensation            |
+| Clock target validation                          | `24:00` and `86400` rejected; previous valid targets restored |
+| Lamp power-cycle behavior                        | both clocks restarted at `00:00:00` after power restoration   |
+| Post-power-cycle recovery                        | all-lamp sync verified; fresh clocks within seconds           |
 
 The addresses, labels and percentages above are facts about the reference Mesh,
 not generic defaults.
@@ -109,6 +116,28 @@ For one lamp with its current clock recorded:
 For an all-lamps test, confirm that the result reports each node separately and that a
 failed node does not hide successful nodes. Avoid repeating clock writes unnecessarily;
 each write and readback consumes Mesh Sequence Numbers.
+
+### Completed clock-control hardware run — 2026-07-17/18
+
+The v0.3.0 release candidate was exercised through the native adapter against
+two real lamps. The run confirmed:
+
+- canonical seconds/`HH:MM:SS` pairing in both directions;
+- rejection and restoration for `24:00` and `86400`;
+- verified single-lamp `sync-clock` and `set-clock`;
+- verified all-lamp `sync-clock` and `set-clock` with per-node results;
+- Mesh-free `refresh-gateway-info` without Sequence Number advancement;
+- automatic reset of every one-shot ioBroker control to `false`;
+- clean gateway and adapter logs for the clock commands;
+- both lamp clocks restarting at `00:00:00` after a one-minute power cycle;
+- verified all-lamp recovery synchronization after power returned; and
+- fresh independent lamp reads within approximately one to two seconds of the
+  host clock after recovery.
+
+The final gateway wording commit passed 144 offline tests on the gateway Pi,
+and `sanlight-gateway doctor` remained healthy. The all-lamp recovery command
+took approximately 33 seconds, so clients must continue to treat `pending` as
+an active command rather than a failure.
 
 ## Earlier gateway safety validation — 2026-07-15
 

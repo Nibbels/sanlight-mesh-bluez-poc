@@ -4,9 +4,14 @@ All notable changes to this community project are documented here. The project i
 
 ## Unreleased
 
+## 0.3.0 - 2026-07-18
+
 - Add explicit MQTT clock controls for one lamp or all lamps: `sync-clock`, `set-clock` and the Mesh-free `refresh-gateway-info` action.
 - Replace MQTT `lampTimeMs` with `lampClockSeconds` (`0..86399`) and second-resolution `lampClock`; keep millisecond handling internal to the vendor protocol implementation.
 - Publish the gateway local-clock snapshot in retained `gateway/info`, verify every clock write by live readback, and report partial per-lamp outcomes.
+- Hardware-validate per-lamp and all-lamp refresh, synchronization and arbitrary clock targets on two lamps, including input rejection, sequential verification and one-shot command reset.
+- Confirm that both validated lamp clocks restart at `00:00:00` after power is restored and can be recovered with one verified all-lamp synchronization.
+- Clarify refresh and all-lamp result messages so they describe clock data and plural targets accurately.
 
 ## 0.2.0 - 2026-07-17
 
