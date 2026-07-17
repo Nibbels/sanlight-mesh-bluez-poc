@@ -4,7 +4,7 @@ All notable changes to this community project are documented here. The project i
 
 ## Unreleased
 
-No changes yet.
+- Restore explicit release-archive exclusions for the ioBroker MQTT password file and the managed Mosquitto password database; this fixes the offline productization safety test without changing installation or runtime behavior.
 
 ## 0.2.0 - 2026-07-17
 
