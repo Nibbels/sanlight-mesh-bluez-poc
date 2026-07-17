@@ -22,7 +22,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-      - run: ./scripts/run-tests.sh
+      - name: Run offline safety tests
+        run: bash scripts/run-tests.sh
 
   shell-and-release:
     timeout-minutes: 10
@@ -31,6 +32,16 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - run: bash -n scripts/*.sh scripts/sanlight-gateway
-      - run: scripts/release-archive.sh 0.2.0-ci
-      - run: tar -tzf dist/sanlight-mesh-mqtt-gateway-0.2.0-ci.tar.gz | head -n 20
+      - name: Check shell syntax
+        run: bash -n scripts/*.sh scripts/sanlight-gateway
+      - name: Build release archive
+        run: bash scripts/release-archive.sh 0.2.0-ci
+      - name: Verify release checksum
+        run: cd dist && sha256sum -c sanlight-mesh-mqtt-gateway-0.2.0-ci.tar.gz.sha256
+      - name: Test extracted release archive
+        run: |
+          temporary="$(mktemp -d)"
+          trap 'rm -rf "$temporary"' EXIT
+          tar -xzf dist/sanlight-mesh-mqtt-gateway-0.2.0-ci.tar.gz -C "$temporary"
+          cd "$temporary/sanlight-mesh-mqtt-gateway-0.2.0-ci"
+          bash scripts/run-tests.sh

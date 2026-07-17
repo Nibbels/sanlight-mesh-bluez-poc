@@ -4,24 +4,20 @@ All notable changes to this community project are documented here. The project i
 
 ## Unreleased
 
-- Restore explicit release-archive exclusions for the ioBroker MQTT password file and the managed Mosquitto password database; this fixes the offline productization safety test without changing installation or runtime behavior.
+No changes yet.
 
 ## 0.2.0 - 2026-07-17
 
+- Make GitHub Actions invoke repository shell scripts through `bash`, so CI does not depend on executable bits preserved by the checkout platform.
+- Verify the generated release checksum and rerun the complete offline safety suite from the extracted release archive.
+- Restore explicit release-archive exclusions for the ioBroker MQTT password file and the managed Mosquitto password database.
 - Add an offline GitHub Actions regression gate for Python 3.11 and 3.13, shell syntax and secret-free release archives.
 - Replace the oversized first-line operations document with a short operator guide while preserving the complete technical reference under `docs/ADVANCED_REFERENCE.md`.
 - Add explicit release metadata and first-public-release notes.
 - Use neutral gateway wording in the installed doctor output.
 - Prevent root-run doctor and diagnostic repository checks from refreshing or rewriting the Git index by disabling Git optional locks for all read-only repository inspection.
-
-- Extend read-only MQTT node state with lamp time and current effective-output
-  data from `GetUptimeAndBrightness`; preserve the raw uint16 value, expose the
-  empirical `raw / 10` percentage estimate separately, and keep MaxBrightness as
-  the independent configured schedule scaling limit.
-
-- Standardize public documentation and service descriptions so the independent
-  gateway is not presented as an official SANlight product; retain SANlight
-  names only for compatibility and protocol references.
+- Extend read-only MQTT node state with lamp time and current effective-output data from `GetUptimeAndBrightness`; preserve the raw uint16 value, expose the empirical `raw / 10` percentage estimate separately, and keep MaxBrightness as the independent configured schedule scaling limit.
+- Standardize public documentation and service descriptions so the independent gateway is not presented as an official SANlight product; retain SANlight names only for compatibility and protocol references.
 - Make IV Index installation failures actionable: clarify that normal installs require no manual value, document trusted sources and exact recovery steps, and improve the CLI error without changing identity selection or Mesh state behavior.
 - Clarify the SANlight app App-ID, CDB provisioner identity, Mesh source address, AppKey index and AID terminology without changing gateway behavior.
 - Simplify the public README and first-time setup path, remove duplicated adapter configuration, and clarify the gateway-to-adapter handoff.
