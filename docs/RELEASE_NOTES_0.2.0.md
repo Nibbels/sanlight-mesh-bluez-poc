@@ -8,7 +8,7 @@ This is the first public GitHub release of the independent community gateway. It
 - Native integration with `ioBroker.sanlightmesh` through MQTT API v1.
 - Verified MaxBrightness reads and writes with a strict normal range of `20..100%`.
 - Separate protected blackout and restore workflow.
-- Read-only live lamp status including lamp clock, raw effective-output value and an explicitly empirical `raw / 10` percentage estimate.
+- Read-only live lamp status including lamp clock, a one-decimal current-output percentage and the raw transport field retained for MQTT API v1 compatibility.
 - Safe adoption of matching BlueZ identities, actionable IV Index recovery and protected sequence-state handling.
 - Health, log and redacted-diagnostics helper.
 - Offline tests, GitHub Actions and secret-free release archive tooling.
@@ -19,7 +19,7 @@ The MQTT contract remains API v1. The live-output fields are additive; older API
 
 ## Important limitations
 
-- The live-output percentage estimate is empirical and is not calibrated watts, photon flux or PPFD.
+- Hardware comparison confirmed `33.4%` from the gateway against the SANlight app's rounded `34%` display; the value is still not calibrated watts, photon flux or PPFD.
 - Do not expose MQTT port 1883 to the internet.
 - Do not copy Mesh keys, CDB exports or `.state/` between independent active gateways.
 - Sequence recovery and destructive Mesh rebuild procedures are advanced recovery operations, not normal update steps.

@@ -12,14 +12,14 @@ Examples below use the illustrative unicast address `1234`. Replace it with an a
 
 ## Topics
 
-| Topic | Retained | Purpose |
-|---|---:|---|
-| `availability` | yes | `online` or Last-Will `offline` |
-| `gateway/info` | yes | gateway, nodes, traffic policy and sequence budget |
-| `nodes/<NODE>/meta` | yes | stable node metadata |
-| `nodes/<NODE>/state` | yes | last verified MaxBrightness and live lamp-output state |
-| `command` | **never** | ioBroker/client requests |
-| `result/<COMMAND_ID>` | no | final result for one request ID |
+| Topic                 |  Retained | Purpose                                                |
+| --------------------- | --------: | ------------------------------------------------------ |
+| `availability`        |       yes | `online` or Last-Will `offline`                        |
+| `gateway/info`        |       yes | gateway, nodes, traffic policy and sequence budget     |
+| `nodes/<NODE>/meta`   |       yes | stable node metadata                                   |
+| `nodes/<NODE>/state`  |       yes | last verified MaxBrightness and live lamp-output state |
+| `command`             | **never** | ioBroker/client requests                               |
+| `result/<COMMAND_ID>` |        no | final result for one request ID                        |
 
 Command messages must be non-retained. Recommended QoS is 1. Application-level command IDs provide deduplication because QoS 1 may redeliver.
 
@@ -32,11 +32,11 @@ The gateway uses MQTT 5 subscription options `retainAsPublished=true` and `retai
 
 ```json
 {
-  "id": "unique-command-id",
-  "action": "refresh",
-  "target": "1234",
-  "createdAt": "2026-07-15T20:30:00Z",
-  "ttlSeconds": 30
+	"id": "unique-command-id",
+	"action": "refresh",
+	"target": "1234",
+	"createdAt": "2026-07-15T20:30:00Z",
+	"ttlSeconds": 30
 }
 ```
 
@@ -56,11 +56,11 @@ Rules:
 
 ```json
 {
-  "id": "refresh-1234-001",
-  "action": "refresh",
-  "target": "1234",
-  "createdAt": "2026-07-15T20:30:00Z",
-  "ttlSeconds": 30
+	"id": "refresh-1234-001",
+	"action": "refresh",
+	"target": "1234",
+	"createdAt": "2026-07-15T20:30:00Z",
+	"ttlSeconds": 30
 }
 ```
 
@@ -74,12 +74,12 @@ Numbers.
 
 ```json
 {
-  "id": "set-1234-48-001",
-  "action": "set-max",
-  "target": "1234",
-  "value": 48,
-  "createdAt": "2026-07-15T20:30:00Z",
-  "ttlSeconds": 30
+	"id": "set-1234-48-001",
+	"action": "set-max",
+	"target": "1234",
+	"value": 48,
+	"createdAt": "2026-07-15T20:30:00Z",
+	"ttlSeconds": 30
 }
 ```
 
@@ -96,12 +96,12 @@ Separate brightness writes are subject to the persistent ten-second guard. A com
 
 ```json
 {
-  "id": "blackout-all-001",
-  "action": "blackout",
-  "target": "all",
-  "confirmed": true,
-  "createdAt": "2026-07-15T20:30:00Z",
-  "ttlSeconds": 120
+	"id": "blackout-all-001",
+	"action": "blackout",
+	"target": "all",
+	"confirmed": true,
+	"createdAt": "2026-07-15T20:30:00Z",
+	"ttlSeconds": 120
 }
 ```
 
@@ -111,12 +111,12 @@ Target may be one node or `all`. The gateway uses the protected snapshot workflo
 
 ```json
 {
-  "id": "restore-blackout-001",
-  "action": "restore-blackout",
-  "target": "latest",
-  "confirmed": true,
-  "createdAt": "2026-07-15T20:30:00Z",
-  "ttlSeconds": 180
+	"id": "restore-blackout-001",
+	"action": "restore-blackout",
+	"target": "latest",
+	"confirmed": true,
+	"createdAt": "2026-07-15T20:30:00Z",
+	"ttlSeconds": 180
 }
 ```
 
@@ -126,27 +126,27 @@ MQTT v1 deliberately accepts only `latest`; callers cannot supply local paths.
 
 ```json
 {
-  "protocolVersion": 1,
-  "id": "set-1234-48-001",
-  "ok": true,
-  "status": "verified",
-  "message": "Node 1234 reports MaxBrightness 48% as requested.",
-  "action": "set-max",
-  "target": "1234",
-  "requested": 48,
-  "details": {
-    "reported": {"1234": 48},
-    "liveReported": {
-      "1234": {
-        "lampTimeMs": 61265168,
-        "lampClock": "17:01:05.168",
-        "liveBrightnessRaw": 461,
-        "liveBrightnessPercentEstimate": 46.1
-      }
-    },
-    "exitCode": 0
-  },
-  "timestamp": "2026-07-15T20:30:04Z"
+	"protocolVersion": 1,
+	"id": "set-1234-48-001",
+	"ok": true,
+	"status": "verified",
+	"message": "Node 1234 reports MaxBrightness 48% as requested.",
+	"action": "set-max",
+	"target": "1234",
+	"requested": 48,
+	"details": {
+		"reported": { "1234": 48 },
+		"liveReported": {
+			"1234": {
+				"lampTimeMs": 61265168,
+				"lampClock": "17:01:05.168",
+				"liveBrightnessRaw": 461,
+				"liveBrightnessPercentEstimate": 46.1
+			}
+		},
+		"exitCode": 0
+	},
+	"timestamp": "2026-07-15T20:30:04Z"
 }
 ```
 
@@ -174,19 +174,19 @@ When a completed QoS 1 command ID is delivered again, the gateway republishes th
 
 ```json
 {
-  "protocolVersion": 1,
-  "address": "1234",
-  "name": "Example lamp",
-  "maxBrightness": 68,
-  "off": false,
-  "verified": true,
-  "verifiedAt": "2026-07-16T20:30:04Z",
-  "liveVerified": true,
-  "lampTimeMs": 61265168,
-  "lampClock": "17:01:05.168",
-  "liveBrightnessRaw": 461,
-  "liveBrightnessPercentEstimate": 46.1,
-  "liveVerifiedAt": "2026-07-16T20:30:05Z"
+	"protocolVersion": 1,
+	"address": "1234",
+	"name": "Example lamp",
+	"maxBrightness": 68,
+	"off": false,
+	"verified": true,
+	"verifiedAt": "2026-07-16T20:30:04Z",
+	"liveVerified": true,
+	"lampTimeMs": 61265168,
+	"lampClock": "17:01:05.168",
+	"liveBrightnessRaw": 461,
+	"liveBrightnessPercentEstimate": 46.1,
+	"liveVerifiedAt": "2026-07-16T20:30:05Z"
 }
 ```
 
@@ -197,8 +197,9 @@ When a completed QoS 1 command ID is delivered again, the gateway republishes th
 - `liveBrightnessPercentEstimate` is the empirical calculation `raw / 10`.
 
 The estimate is useful for relative automation and comparison, but it is not a
-calibrated watt, photon-flux or PPFD measurement. Keep the raw value available
-until the scale is confirmed across more hardware and firmware versions.
+calibrated watt, photon-flux or PPFD measurement. The raw value remains available
+for full vendor-response validation, compatibility and comparisons across more
+hardware and firmware versions.
 
 `liveVerified=false` means no valid current live-status sample accompanied the
 latest update. In that case the live value fields are omitted. Older MQTT API v1
@@ -210,6 +211,12 @@ Only verified values update retained node state. `maxBrightness: 0` with
 change observed by refresh. Blackout and restore verify MaxBrightness but do not
 perform a live-status read, so they invalidate the retained live sample until the
 next refresh.
+
+The raw uint16 field remains in API v1 so clients can validate the complete vendor
+response and existing consumers remain compatible. User interfaces should
+normally display `liveBrightnessPercentEstimate`. A hardware comparison produced
+`33.4%` while the SANlight app showed the same value rounded to `34%`. The
+percentage is not calibrated watts, photon flux or PPFD.
 
 ## Gateway information
 

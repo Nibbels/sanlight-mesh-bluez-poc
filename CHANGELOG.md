@@ -4,7 +4,8 @@ All notable changes to this community project are documented here. The project i
 
 ## Unreleased
 
-No changes yet.
+- Hardware-validate the current-output percentage against the SANlight app: raw `334` is `33.4%` in MQTT/ioBroker and appears as the rounded value `34%` in the app.
+- Clarify that the raw vendor field remains part of MQTT API v1 for validation and compatibility while clients should normally display the percentage.
 
 ## 0.2.0 - 2026-07-17
 

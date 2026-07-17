@@ -111,8 +111,15 @@ expiry, coalescing, rate limiting and restart recovery. See
 
 Version `0.2.0` is prepared as the first public GitHub release. The project
 remains pre-1.0, so compatibility changes are still possible and are documented
-in the changelog. Other SANlight firmware versions, Mesh layouts and
-network-security designs require their own validation.
+in the changelog.
+
+The read-only current-output percentage was additionally compared with the
+SANlight app on 2026-07-17: the gateway value `33.4%` appeared as the app's
+rounded `34%`. MQTT API v1 keeps the raw vendor field for validation and
+compatibility, while user interfaces should normally present the percentage.
+
+Other SANlight firmware versions, Mesh layouts and network-security designs
+require their own validation.
 
 ## Documentation
 
