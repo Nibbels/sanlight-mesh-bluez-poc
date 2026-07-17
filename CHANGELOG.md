@@ -4,6 +4,8 @@ All notable changes to this community project are documented here. The project i
 
 ## Unreleased
 
+- Prevent root-run doctor and diagnostic repository checks from refreshing or rewriting the Git index by disabling Git optional locks for all read-only repository inspection.
+
 - Extend read-only MQTT node state with lamp time and current effective-output
   data from `GetUptimeAndBrightness`; preserve the raw uint16 value, expose the
   empirical `raw / 10` percentage estimate separately, and keep MaxBrightness as

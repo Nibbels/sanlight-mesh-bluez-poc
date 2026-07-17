@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 set -euo pipefail
+
 umask 077
 
 SERVICE="sanlight-mqtt-gateway.service"
@@ -11,36 +12,36 @@ BROKER_PORT=1883
 CONFIG_PATH=""
 
 usage() {
-    cat <<'USAGE'
+  cat <<'USAGE'
 Usage: sanlight-gateway [--config PATH] COMMAND [arguments]
 
 Commands:
-  status                     Show broker, Mesh and gateway service state
-  doctor                     Run read-only health checks
-  logs [LINES]               Show recent gateway journal (default: 100)
-  restart                    Restart the MQTT gateway service
-  check-config               Validate configuration without starting the service
-  collect-diagnostics [FILE] Write a redacted text report
-  help                       Show this help
+  status                       Show broker, Mesh and gateway service state
+  doctor                       Run read-only health checks
+  logs [LINES]                 Show recent gateway journal (default: 100)
+  restart                      Restart the MQTT gateway service
+  check-config                 Validate configuration without starting the service
+  collect-diagnostics [FILE]   Write a redacted text report
+  help                         Show this help
 
 The doctor and diagnostics commands never send Mesh write commands.
 USAGE
 }
 
 while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --config)
-            shift
-            [[ $# -gt 0 ]] || { echo "ERROR: --config requires a path" >&2; exit 2; }
-            CONFIG_PATH="$1"
-            shift
-            ;;
-        -h|--help)
-            usage
-            exit 0
-            ;;
-        *) break ;;
-    esac
+  case "$1" in
+    --config)
+      shift
+      [[ $# -gt 0 ]] || { echo "ERROR: --config requires a path" >&2; exit 2; }
+      CONFIG_PATH="$1"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *) break ;;
+  esac
 done
 
 COMMAND="${1:-help}"
@@ -49,33 +50,38 @@ COMMAND="${1:-help}"
 SCRIPT_PATH="$(realpath -m "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 REPO_DIR=""
+
 if [[ -f "$SCRIPT_DIR/../sanlight_mqtt_gateway.py" ]]; then
-    REPO_DIR="$(realpath "$SCRIPT_DIR/..")"
+  REPO_DIR="$(realpath "$SCRIPT_DIR/..")"
 elif [[ -r /etc/sanlight-mesh-mqtt-gateway/repository-path ]]; then
-    REPO_DIR="$(head -n 1 /etc/sanlight-mesh-mqtt-gateway/repository-path)"
+  REPO_DIR="$(head -n 1 /etc/sanlight-mesh-mqtt-gateway/repository-path)"
 fi
 
 resolve_config() {
-    if [[ -n "$CONFIG_PATH" ]]; then
-        CONFIG_PATH="$(realpath -m "$CONFIG_PATH")"
-        return
-    fi
-    if [[ -f /etc/sanlight-mesh-mqtt-gateway/gateway.toml ]]; then
-        CONFIG_PATH=/etc/sanlight-mesh-mqtt-gateway/gateway.toml
-        return
-    fi
-    local unit=/etc/systemd/system/sanlight-mqtt-gateway.service
-    if [[ -r "$unit" ]]; then
-        CONFIG_PATH="$(sed -nE 's|^ExecStart=.* --config ([^ ]+).*$|\1|p' "$unit" | head -n 1)"
-    fi
+  if [[ -n "$CONFIG_PATH" ]]; then
+    CONFIG_PATH="$(realpath -m "$CONFIG_PATH")"
+    return
+  fi
+
+  if [[ -f /etc/sanlight-mesh-mqtt-gateway/gateway.toml ]]; then
+    CONFIG_PATH=/etc/sanlight-mesh-mqtt-gateway/gateway.toml
+    return
+  fi
+
+  local unit=/etc/systemd/system/sanlight-mqtt-gateway.service
+  if [[ -r "$unit" ]]; then
+    CONFIG_PATH="$(sed -nE 's|^ExecStart=.* --config ([^ ]+).*$|\1|p' "$unit" | head -n 1)"
+  fi
 }
+
 resolve_config
 
 find_repo_from_config() {
-    [[ -n "$REPO_DIR" && -f "$REPO_DIR/sanlight_mqtt_gateway.py" ]] && return 0
-    [[ -n "$CONFIG_PATH" && -f "$CONFIG_PATH" ]] || return 1
-    local candidate
-    candidate="$(/usr/bin/python3 - "$CONFIG_PATH" <<'PY' 2>/dev/null || true
+  [[ -n "$REPO_DIR" && -f "$REPO_DIR/sanlight_mqtt_gateway.py" ]] && return 0
+  [[ -n "$CONFIG_PATH" && -f "$CONFIG_PATH" ]] || return 1
+
+  local candidate
+  candidate="$(/usr/bin/python3 - "$CONFIG_PATH" <<'PY' 2>/dev/null || true
 from pathlib import Path
 import sys
 import tomllib
@@ -88,148 +94,161 @@ except Exception:
     pass
 PY
 )"
-    if [[ -n "$candidate" && -f "$candidate/sanlight_mqtt_gateway.py" ]]; then
-        REPO_DIR="$(realpath "$candidate")"
-        return 0
-    fi
-    return 1
+
+  if [[ -n "$candidate" && -f "$candidate/sanlight_mqtt_gateway.py" ]]; then
+    REPO_DIR="$(realpath "$candidate")"
+    return 0
+  fi
+
+  return 1
 }
+
 find_repo_from_config || true
 
+git_read_only() {
+  GIT_OPTIONAL_LOCKS=0 git -C "$REPO_DIR" "$@"
+}
+
 check_config() {
-    [[ -n "$CONFIG_PATH" && -f "$CONFIG_PATH" ]] || {
-        echo "ERROR: gateway configuration was not found; use --config PATH" >&2
-        return 1
-    }
-    [[ -n "$REPO_DIR" && -f "$REPO_DIR/sanlight_mqtt_gateway.py" ]] || {
-        echo "ERROR: gateway repository/release directory was not found" >&2
-        return 1
-    }
-    /usr/bin/python3 "$REPO_DIR/sanlight_mqtt_gateway.py" \
-        --config "$CONFIG_PATH" \
-        --check
+  [[ -n "$CONFIG_PATH" && -f "$CONFIG_PATH" ]] || {
+    echo "ERROR: gateway configuration was not found; use --config PATH" >&2
+    return 1
+  }
+
+  [[ -n "$REPO_DIR" && -f "$REPO_DIR/sanlight_mqtt_gateway.py" ]] || {
+    echo "ERROR: gateway repository/release directory was not found" >&2
+    return 1
+  }
+
+  /usr/bin/python3 "$REPO_DIR/sanlight_mqtt_gateway.py" \
+    --config "$CONFIG_PATH" \
+    --check
 }
 
 service_summary() {
-    local service="$1" label="$2"
-    echo "$label:"
-    systemctl is-enabled "$service" 2>/dev/null || true
-    systemctl is-active "$service" 2>/dev/null || true
-    echo
+  local service="$1" label="$2"
+  echo "$label:"
+  systemctl is-enabled "$service" 2>/dev/null || true
+  systemctl is-active "$service" 2>/dev/null || true
+  echo
 }
 
 status_command() {
-    service_summary "$BROKER_SERVICE" "LOCAL MQTT BROKER"
-    service_summary "$MESH_SERVICE" "MESH SERVICE"
-    service_summary "$SERVICE" "MQTT GATEWAY SERVICE"
-    SYSTEMD_PAGER=cat systemctl status "$SERVICE" --no-pager --full || true
+  service_summary "$BROKER_SERVICE" "LOCAL MQTT BROKER"
+  service_summary "$MESH_SERVICE" "MESH SERVICE"
+  service_summary "$SERVICE" "MQTT GATEWAY SERVICE"
+  SYSTEMD_PAGER=cat systemctl status "$SERVICE" --no-pager --full || true
 }
 
 doctor_command() {
-    local failures=0
-    pass() { printf 'PASS %s\n' "$1"; }
-    fail() { printf 'FAIL %s\n' "$1"; failures=$((failures + 1)); }
-    warn() { printf 'WARN %s\n' "$1"; }
+  local failures=0
 
-    echo "SANlight gateway read-only doctor"
-    echo "================================="
+  pass() { printf 'PASS %s\n' "$1"; }
+  fail() { printf 'FAIL %s\n' "$1"; failures=$((failures + 1)); }
+  warn() { printf 'WARN %s\n' "$1"; }
 
-    command -v python3 >/dev/null 2>&1 && pass "python3 available" || fail "python3 missing"
-    command -v systemctl >/dev/null 2>&1 && pass "systemctl available" || fail "systemctl missing"
-    command -v busctl >/dev/null 2>&1 && pass "busctl available" || fail "busctl missing"
-    command -v ss >/dev/null 2>&1 && pass "ss available" || fail "ss missing"
+  echo "SANlight gateway read-only doctor"
+  echo "================================="
 
-    systemctl is-active --quiet "$BROKER_SERVICE" \
-        && pass "$BROKER_SERVICE active" \
-        || fail "$BROKER_SERVICE inactive"
-    systemctl is-active --quiet "$MESH_SERVICE" \
-        && pass "$MESH_SERVICE active" \
-        || fail "$MESH_SERVICE inactive"
-    systemctl is-active --quiet "$SERVICE" \
-        && pass "$SERVICE active" \
-        || fail "$SERVICE inactive"
+  command -v python3 >/dev/null 2>&1 && pass "python3 available" || fail "python3 missing"
+  command -v systemctl >/dev/null 2>&1 && pass "systemctl available" || fail "systemctl missing"
+  command -v busctl >/dev/null 2>&1 && pass "busctl available" || fail "busctl missing"
+  command -v ss >/dev/null 2>&1 && pass "ss available" || fail "ss missing"
 
-    if ss -ltn 2>/dev/null | grep -Eq "[.:]${BROKER_PORT}[[:space:]]"; then
-        pass "local MQTT broker listening on TCP ${BROKER_PORT}"
-    else
-        fail "no local MQTT listener on TCP ${BROKER_PORT}"
-    fi
+  systemctl is-active --quiet "$BROKER_SERVICE" \
+    && pass "$BROKER_SERVICE active" \
+    || fail "$BROKER_SERVICE inactive"
+  systemctl is-active --quiet "$MESH_SERVICE" \
+    && pass "$MESH_SERVICE active" \
+    || fail "$MESH_SERVICE inactive"
+  systemctl is-active --quiet "$SERVICE" \
+    && pass "$SERVICE active" \
+    || fail "$SERVICE inactive"
 
-    if [[ -f "$BROKER_CONFIG" ]]; then
-        broker_mode="$(stat -c '%a' "$BROKER_CONFIG" 2>/dev/null || echo unknown)"
-        [[ "$broker_mode" == 644 ]] \
-            && pass "managed Mosquitto config mode 644" \
-            || fail "managed Mosquitto config mode is $broker_mode, expected 644"
-    else
-        fail "managed Mosquitto config not found"
-    fi
+  if ss -ltn 2>/dev/null | grep -Eq "[.:]${BROKER_PORT}[[:space:]]"; then
+    pass "local MQTT broker listening on TCP ${BROKER_PORT}"
+  else
+    fail "no local MQTT listener on TCP ${BROKER_PORT}"
+  fi
 
-    if busctl introspect org.bluez.mesh /org/bluez/mesh org.bluez.mesh.Network1 \
-        >/dev/null 2>&1; then
-        pass "BlueZ Mesh Network1 D-Bus interface available"
-    else
-        fail "BlueZ Mesh Network1 D-Bus interface unavailable"
-    fi
+  if [[ -f "$BROKER_CONFIG" ]]; then
+    broker_mode="$(stat -c '%a' "$BROKER_CONFIG" 2>/dev/null || echo unknown)"
+    [[ "$broker_mode" == 644 ]] \
+      && pass "managed Mosquitto config mode 644" \
+      || fail "managed Mosquitto config mode is $broker_mode, expected 644"
+  else
+    fail "managed Mosquitto config not found"
+  fi
 
-    if [[ -n "$CONFIG_PATH" && -f "$CONFIG_PATH" ]]; then
-        mode="$(stat -c '%a' "$CONFIG_PATH" 2>/dev/null || echo unknown)"
-        [[ "$mode" == 600 ]] \
-            && pass "gateway config mode 600" \
-            || fail "gateway config mode is $mode, expected 600"
-    else
-        fail "gateway config not found"
-    fi
+  if busctl introspect org.bluez.mesh /org/bluez/mesh org.bluez.mesh.Network1 \
+    >/dev/null 2>&1; then
+    pass "BlueZ Mesh Network1 D-Bus interface available"
+  else
+    fail "BlueZ Mesh Network1 D-Bus interface unavailable"
+  fi
 
-    if check_config >/dev/null 2>&1; then
-        pass "gateway config and private file validation"
-    else
-        fail "gateway config validation (run: sanlight-gateway check-config)"
-    fi
+  if [[ -n "$CONFIG_PATH" && -f "$CONFIG_PATH" ]]; then
+    mode="$(stat -c '%a' "$CONFIG_PATH" 2>/dev/null || echo unknown)"
+    [[ "$mode" == 600 ]] \
+      && pass "gateway config mode 600" \
+      || fail "gateway config mode is $mode, expected 600"
+  else
+    fail "gateway config not found"
+  fi
 
-    if [[ -n "$REPO_DIR" && -d "$REPO_DIR/.git" ]]; then
-        branch="$(git -C "$REPO_DIR" branch --show-current 2>/dev/null || true)"
-        dirty="$(git -C "$REPO_DIR" status --short 2>/dev/null || true)"
-        [[ "$branch" == main ]] \
-            && pass "repository branch main" \
-            || warn "repository branch is ${branch:-unknown}"
-        [[ -z "$dirty" ]] \
-            && pass "repository worktree clean" \
-            || warn "repository worktree has local changes"
-    else
-        warn "release is not a Git checkout; Git checks skipped"
-    fi
+  if check_config >/dev/null 2>&1; then
+    pass "gateway config and private file validation"
+  else
+    fail "gateway config validation (run: sanlight-gateway check-config)"
+  fi
 
-    echo
-    if (( failures == 0 )); then
-        echo "Doctor result: healthy"
-        return 0
-    fi
-    echo "Doctor result: $failures failed check(s)"
-    return 1
+  if [[ -n "$REPO_DIR" && -d "$REPO_DIR/.git" ]]; then
+    branch="$(git_read_only branch --show-current 2>/dev/null || true)"
+    dirty="$(git_read_only status --short 2>/dev/null || true)"
+    [[ "$branch" == main ]] \
+      && pass "repository branch main" \
+      || warn "repository branch is ${branch:-unknown}"
+    [[ -z "$dirty" ]] \
+      && pass "repository worktree clean" \
+      || warn "repository worktree has local changes"
+  else
+    warn "release is not a Git checkout; Git checks skipped"
+  fi
+
+  echo
+  if (( failures == 0 )); then
+    echo "Doctor result: healthy"
+    return 0
+  fi
+
+  echo "Doctor result: $failures failed check(s)"
+  return 1
 }
 
 redact_stream() {
-    /usr/bin/python3 -c '
+  /usr/bin/python3 -c '
 import re
 import sys
 
 sensitive = re.compile(r"(?i)(password|netkey|appkey|devicekey|joincomplete|attach token|private key)")
 long_hex = re.compile(r"(?i)\\b[0-9a-f]{32,}\\b")
 uri_auth = re.compile(r"(?i)(mqtts?://)[^/@\\s]+@")
+
 for raw in sys.stdin:
     line = raw.rstrip("\\n")
     if sensitive.search(line):
         print("[REDACTED SENSITIVE LINE]")
         continue
-    line = long_hex.sub("", line)
-    line = uri_auth.sub(r"\\1@", line)
+    line = long_hex.sub("<redacted-hex>", line)
+    line = uri_auth.sub(r"\\1<redacted>@", line)
     print(line)
 '
 }
 
 safe_config_summary() {
-    [[ -n "$REPO_DIR" && -n "$CONFIG_PATH" && -f "$CONFIG_PATH" ]] || return 0
-    PYTHONPATH="$REPO_DIR" /usr/bin/python3 - "$CONFIG_PATH" <<'PY' 2>&1
+  [[ -n "$REPO_DIR" && -n "$CONFIG_PATH" && -f "$CONFIG_PATH" ]] || return 0
+
+  PYTHONPATH="$REPO_DIR" /usr/bin/python3 - "$CONFIG_PATH" <<'PY' 2>&1
 from pathlib import Path
 import json
 import sys
@@ -245,104 +264,112 @@ PY
 }
 
 collect_diagnostics() {
-    local output="${1:-sanlight-gateway-diagnostics-$(date --utc +%Y%m%dT%H%M%SZ).txt}"
-    output="$(realpath -m "$output")"
+  local output="${1:-sanlight-gateway-diagnostics-$(date --utc +%Y%m%dT%H%M%SZ).txt}"
+  output="$(realpath -m "$output")"
 
-    {
-        echo "SANlight Mesh MQTT Gateway diagnostics"
-        echo "Generated: $(date --utc --iso-8601=seconds)"
-        echo "Review this file before sharing. It intentionally excludes config contents and private state."
-        echo
-        echo "== HOST =="
-        hostnamectl 2>&1 || true
-        uname -a 2>&1 || true
-        [[ -r /etc/os-release ]] && cat /etc/os-release
-        echo
-        echo "== SOFTWARE =="
-        python3 --version 2>&1 || true
-        bluetooth-meshd --version 2>&1 || true
-        mosquitto -h 2>&1 | head -n 2 || true
-        if [[ -n "$REPO_DIR" ]]; then
-            echo "Repository/release path: $REPO_DIR"
-            git -C "$REPO_DIR" log -1 --oneline 2>&1 || true
-            git -C "$REPO_DIR" status --short 2>&1 || true
-        fi
-        echo
-        echo "== CONFIGURATION SUMMARY =="
-        echo "Config path: ${CONFIG_PATH:-not found}"
-        [[ -n "$CONFIG_PATH" && -e "$CONFIG_PATH" ]] \
-            && stat -c 'Config mode/owner: %a %U:%G' "$CONFIG_PATH" 2>&1 \
-            || true
-        safe_config_summary
-        echo
-        echo "== SERVICES =="
-        for service in "$BROKER_SERVICE" "$MESH_SERVICE" "$SERVICE"; do
-            echo "-- $service --"
-            systemctl is-enabled "$service" 2>&1 || true
-            systemctl is-active "$service" 2>&1 || true
-            systemctl show "$service" \
-                -p ActiveState -p SubState -p Restart -p NRestarts -p ExecMainStatus \
-                2>&1 || true
-        done
-        echo
-        echo "== LISTENERS =="
-        ss -ltn 2>&1 | grep -E "State|[.:]${BROKER_PORT}[[:space:]]" || true
-        echo
-        echo "== BLUEZ MESH DBUS =="
-        busctl introspect org.bluez.mesh /org/bluez/mesh org.bluez.mesh.Network1 \
-            2>&1 | head -n 80 || true
-        echo
-        echo "== READ-ONLY DOCTOR =="
-        doctor_command 2>&1 || true
-        echo
-        echo "== RECENT BROKER JOURNAL =="
-        journalctl -u "$BROKER_SERVICE" -n 100 --no-pager --output=short-iso 2>&1 || true
-        echo
-        echo "== RECENT GATEWAY JOURNAL =="
-        journalctl -u "$SERVICE" -n 200 --no-pager --output=short-iso 2>&1 || true
-    } | redact_stream > "$output"
+  {
+    echo "SANlight Mesh MQTT Gateway diagnostics"
+    echo "Generated: $(date --utc --iso-8601=seconds)"
+    echo "Review this file before sharing. It intentionally excludes config contents and private state."
+    echo
+    echo "== HOST =="
+    hostnamectl 2>&1 || true
+    uname -a 2>&1 || true
+    [[ -r /etc/os-release ]] && cat /etc/os-release
 
-    chmod 0600 "$output"
-    echo "Diagnostics written to: $output"
-    echo "Review it before sharing. Never attach the CDB, password files or .state/ contents."
+    echo
+    echo "== SOFTWARE =="
+    python3 --version 2>&1 || true
+    bluetooth-meshd --version 2>&1 || true
+    mosquitto -h 2>&1 | head -n 2 || true
+    if [[ -n "$REPO_DIR" ]]; then
+      echo "Repository/release path: $REPO_DIR"
+      git_read_only log -1 --oneline 2>&1 || true
+      git_read_only status --short 2>&1 || true
+    fi
+
+    echo
+    echo "== CONFIGURATION SUMMARY =="
+    echo "Config path: ${CONFIG_PATH:-not found}"
+    [[ -n "$CONFIG_PATH" && -e "$CONFIG_PATH" ]] \
+      && stat -c 'Config mode/owner: %a %U:%G' "$CONFIG_PATH" 2>&1 \
+      || true
+    safe_config_summary
+
+    echo
+    echo "== SERVICES =="
+    for service in "$BROKER_SERVICE" "$MESH_SERVICE" "$SERVICE"; do
+      echo "-- $service --"
+      systemctl is-enabled "$service" 2>&1 || true
+      systemctl is-active "$service" 2>&1 || true
+      systemctl show "$service" \
+        -p ActiveState -p SubState -p Restart -p NRestarts -p ExecMainStatus \
+        2>&1 || true
+    done
+
+    echo
+    echo "== LISTENERS =="
+    ss -ltn 2>&1 | grep -E "State|[.:]${BROKER_PORT}[[:space:]]" || true
+
+    echo
+    echo "== BLUEZ MESH DBUS =="
+    busctl introspect org.bluez.mesh /org/bluez/mesh org.bluez.mesh.Network1 \
+      2>&1 | head -n 80 || true
+
+    echo
+    echo "== READ-ONLY DOCTOR =="
+    doctor_command 2>&1 || true
+
+    echo
+    echo "== RECENT BROKER JOURNAL =="
+    journalctl -u "$BROKER_SERVICE" -n 100 --no-pager --output=short-iso 2>&1 || true
+
+    echo
+    echo "== RECENT GATEWAY JOURNAL =="
+    journalctl -u "$SERVICE" -n 200 --no-pager --output=short-iso 2>&1 || true
+  } | redact_stream > "$output"
+
+  chmod 0600 "$output"
+  echo "Diagnostics written to: $output"
+  echo "Review it before sharing. Never attach the CDB, password files or .state/ contents."
 }
 
 case "$COMMAND" in
-    status)
-        status_command
-        ;;
-    doctor)
-        doctor_command
-        ;;
-    logs)
-        lines="${1:-100}"
-        [[ "$lines" =~ ^[0-9]+$ ]] || {
-            echo "ERROR: LINES must be an integer" >&2
-            exit 2
-        }
-        journalctl -u "$SERVICE" -n "$lines" --no-pager --output=short-iso
-        ;;
-    restart)
-        if [[ "$EUID" -ne 0 ]]; then
-            args=()
-            [[ -n "$CONFIG_PATH" ]] && args+=(--config "$CONFIG_PATH")
-            exec sudo -- "$0" "${args[@]}" restart
-        fi
-        systemctl restart "$SERVICE"
-        systemctl is-active "$SERVICE"
-        ;;
-    check-config)
-        check_config
-        ;;
-    collect-diagnostics)
-        collect_diagnostics "${1-}"
-        ;;
-    help)
-        usage
-        ;;
-    *)
-        echo "ERROR: unknown command: $COMMAND" >&2
-        usage >&2
-        exit 2
-        ;;
+  status)
+    status_command
+    ;;
+  doctor)
+    doctor_command
+    ;;
+  logs)
+    lines="${1:-100}"
+    [[ "$lines" =~ ^[0-9]+$ ]] || {
+      echo "ERROR: LINES must be an integer" >&2
+      exit 2
+    }
+    journalctl -u "$SERVICE" -n "$lines" --no-pager --output=short-iso
+    ;;
+  restart)
+    if [[ "$EUID" -ne 0 ]]; then
+      args=()
+      [[ -n "$CONFIG_PATH" ]] && args+=(--config "$CONFIG_PATH")
+      exec sudo -- "$0" "${args[@]}" restart
+    fi
+    systemctl restart "$SERVICE"
+    systemctl is-active "$SERVICE"
+    ;;
+  check-config)
+    check_config
+    ;;
+  collect-diagnostics)
+    collect_diagnostics "${1-}"
+    ;;
+  help)
+    usage
+    ;;
+  *)
+    echo "ERROR: unknown command: $COMMAND" >&2
+    usage >&2
+    exit 2
+    ;;
 esac
