@@ -109,22 +109,22 @@ reversible brightness writes, retained-command rejection, deduplication,
 expiry, coalescing, rate limiting and restart recovery. See
 [docs/MQTT_TEST_PLAN.md](docs/MQTT_TEST_PLAN.md) for the detailed record.
 
-This remains a pre-1.0 community project. The new MQTT live-output fields still
-require the planned controlled hardware comparison; in particular, the `/10`
-percentage scale remains empirical. Other SANlight firmware versions, Mesh
-layouts and network-security designs require their own validation.
+Version `0.2.0` is prepared as the first public GitHub release. The project
+remains pre-1.0, so compatibility changes are still possible and are documented
+in the changelog. Other SANlight firmware versions, Mesh layouts and
+network-security designs require their own validation.
 
 ## Documentation
 
 - [SETUP.md](SETUP.md) — first gateway installation
-- [INSTRUCTIONS.md](INSTRUCTIONS.md) — advanced operation, maintenance and recovery
+- [INSTRUCTIONS.md](INSTRUCTIONS.md) — routine operation and maintenance
+- [docs/ADVANCED_REFERENCE.md](docs/ADVANCED_REFERENCE.md) — identities, CLI and recovery
 - [docs/MQTT_API.md](docs/MQTT_API.md) — MQTT API v1 contract
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — component and repository boundaries
 - [SECURITY.md](SECURITY.md) — secrets and network-security boundaries
 - [CHANGELOG.md](CHANGELOG.md) — notable changes
 
-Maintainer and implementation references remain in `docs/` and
-[AI_CONTEXT.md](AI_CONTEXT.md), but are not required for normal installation.
+Implementation and maintainer references remain in the repository, but are not required for installation or normal operation.
 
 ## License
 

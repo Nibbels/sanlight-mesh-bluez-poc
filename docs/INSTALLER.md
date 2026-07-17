@@ -9,8 +9,7 @@ users should not assemble the installation from those scripts.
 
 ## What the installer owns
 
-The installer prepares one self-contained gateway Pi for a SANlight Mesh
-installation:
+The installer prepares one self-contained SANlight gateway Pi:
 
 1. resolves and protects the private CDB, state and configuration paths;
 2. optionally reads an existing configuration in `--reuse-existing` mode;
@@ -40,7 +39,7 @@ A new installation asks only for deployment-specific values:
 CDB path, project state path, the CDB-derived control and canonical-sender
 identities, local broker endpoint and service names are product invariants rather
 than normal user choices. The SANlight app's App-ID labels must not be confused
-with Bluetooth Mesh AppKey indexes; see [Detailed instructions](../INSTRUCTIONS.md#sanlight-app-id-is-not-a-bluetooth-mesh-appkey-index).
+with Bluetooth Mesh AppKey indexes; see [Detailed instructions](ADVANCED_REFERENCE.md#sanlight-app-id-is-not-a-bluetooth-mesh-appkey-index).
 
 ## Local broker policy
 

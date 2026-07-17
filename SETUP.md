@@ -1,8 +1,7 @@
 # Gateway installation
 
-This is the normal first-time installation path for one gateway Raspberry Pi
-serving a SANlight Mesh installation. It stops after the gateway and its local
-MQTT broker are healthy.
+This is the normal first-time installation path for one SANlight gateway
+Raspberry Pi. It stops after the gateway and its local MQTT broker are healthy.
 The companion adapter is installed separately on the ioBroker host.
 
 The installer does **not** change lamp brightness or lamp time.
@@ -23,7 +22,7 @@ internet.
 
 ## 1. Clone the repository
 
-On the gateway Pi:
+On the SANlight gateway Pi:
 
 ```bash
 sudo apt update
@@ -102,7 +101,7 @@ The value `0` is correct for the repository maintainer's hardware-validation
 mesh and may be used for a completely clean reinstall of that same mesh. It is
 not a default for other installations.
 
-See [Missing a trusted IV Index](INSTRUCTIONS.md#missing-a-trusted-iv-index) for
+See [Missing a trusted IV Index](docs/ADVANCED_REFERENCE.md#missing-a-trusted-iv-index) for
 exact recovery cases and accepted value formats.
 
 ## 4. Save the ioBroker connection data
@@ -140,4 +139,4 @@ sudo sanlight-gateway status
 ```
 
 Updates, service commands, CLI operations and recovery procedures are documented
-in [INSTRUCTIONS.md](INSTRUCTIONS.md).
+in [INSTRUCTIONS.md](INSTRUCTIONS.md) and [docs/ADVANCED_REFERENCE.md](docs/ADVANCED_REFERENCE.md).

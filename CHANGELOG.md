@@ -4,6 +4,14 @@ All notable changes to this community project are documented here. The project i
 
 ## Unreleased
 
+No changes yet.
+
+## 0.2.0 - 2026-07-17
+
+- Add an offline GitHub Actions regression gate for Python 3.11 and 3.13, shell syntax and secret-free release archives.
+- Replace the oversized first-line operations document with a short operator guide while preserving the complete technical reference under `docs/ADVANCED_REFERENCE.md`.
+- Add explicit release metadata and first-public-release notes.
+- Use neutral gateway wording in the installed doctor output.
 - Prevent root-run doctor and diagnostic repository checks from refreshing or rewriting the Git index by disabling Git optional locks for all read-only repository inspection.
 
 - Extend read-only MQTT node state with lamp time and current effective-output

@@ -147,8 +147,8 @@ doctor_command() {
   fail() { printf 'FAIL %s\n' "$1"; failures=$((failures + 1)); }
   warn() { printf 'WARN %s\n' "$1"; }
 
-  echo "SANlight gateway read-only doctor"
-  echo "================================="
+  echo "Gateway read-only doctor"
+  echo "========================"
 
   command -v python3 >/dev/null 2>&1 && pass "python3 available" || fail "python3 missing"
   command -v systemctl >/dev/null 2>&1 && pass "systemctl available" || fail "systemctl missing"
