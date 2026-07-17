@@ -91,6 +91,7 @@ class ClockExecutorTest(unittest.TestCase):
 
         self.assertTrue(result.ok)
         self.assertEqual(result.status, "verified")
+        self.assertEqual(result.message, "Requested lamp clocks applied and verified.")
         writes = [item for item in calls if item[0] == "set-uptime"]
         self.assertEqual(writes[0], ["set-uptime", "0002", "21600"])
         self.assertEqual(writes[1], ["set-uptime", "0003", "21603"])
@@ -121,6 +122,59 @@ class ClockExecutorTest(unittest.TestCase):
         self.assertEqual(result.details["nodes"]["0003"]["status"], "unconfirmed")
         self.assertIn("0002", result.live_reported)
         self.assertNotIn("0003", result.live_reported)
+
+
+    def test_refresh_message_mentions_clock_and_pluralizes_all_lamps(self):
+        executor = self.executor()
+
+        def run(arguments, timeout=None):
+            if arguments[0] == "get-max":
+                return ProcessResult(
+                    0,
+                    f"GET-MAX COMPLETE. Node 0x{arguments[1]} reports MaxBrightness 60%.",
+                    "",
+                )
+            return self.live_output(arguments[1], 21_600)
+
+        executor._run = run
+        single = executor.execute(command("refresh", "0002"))
+        all_lamps = executor.execute(command("refresh", "all"))
+
+        self.assertEqual(
+            single.message,
+            "MaxBrightness, live lamp output, and lamp clock refreshed and verified.",
+        )
+        self.assertEqual(
+            all_lamps.message,
+            "MaxBrightness, live lamp output, and lamp clocks refreshed and verified.",
+        )
+
+    def test_sync_clock_message_pluralizes_all_lamps(self):
+        executor = self.executor()
+        calls = []
+
+        def run(arguments, timeout=None):
+            calls.append(arguments)
+            if arguments[0] == "set-uptime":
+                return ProcessResult(0, "SET-UPTIME COMPLETE.", "")
+            written = int(calls[-2][2])
+            return self.live_output(arguments[1], written)
+
+        executor._run = run
+        with (
+            patch(
+                "sanlight_mesh.gateway_executor._local_seconds_since_midnight",
+                return_value=21_600,
+            ),
+            patch("sanlight_mesh.gateway_executor.time.monotonic", return_value=100.0),
+        ):
+            result = executor.execute(command("sync-clock", "all"))
+
+        self.assertTrue(result.ok)
+        self.assertEqual(
+            result.message,
+            "Lamp clocks synchronized with the gateway local clock and verified.",
+        )
 
     def test_refresh_gateway_info_runs_no_subprocess(self):
         executor = self.executor()

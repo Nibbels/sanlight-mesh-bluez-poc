@@ -206,7 +206,11 @@ class CliCommandExecutor:
             ok=ok,
             status="verified" if ok else "partial" if any_reported else "failed",
             message=(
-                "MaxBrightness and live lamp output refreshed and verified."
+                (
+                    "MaxBrightness, live lamp output, and lamp clocks refreshed and verified."
+                    if target == "all"
+                    else "MaxBrightness, live lamp output, and lamp clock refreshed and verified."
+                )
                 if ok
                 else "One or more read-only lamp status requests failed."
             ),
@@ -287,11 +291,18 @@ class CliCommandExecutor:
         ok = verified_count == total
         status = "verified" if ok else "partial" if verified_count else "unconfirmed"
         if ok:
-            message = (
-                "Lamp clock synchronized with the gateway local clock and verified."
-                if command.action == "sync-clock"
-                else "Requested lamp clock applied and verified."
-            )
+            if command.action == "sync-clock":
+                message = (
+                    "Lamp clocks synchronized with the gateway local clock and verified."
+                    if command.target == "all"
+                    else "Lamp clock synchronized with the gateway local clock and verified."
+                )
+            else:
+                message = (
+                    "Requested lamp clocks applied and verified."
+                    if command.target == "all"
+                    else "Requested lamp clock applied and verified."
+                )
         elif verified_count:
             message = f"Clock write verified for {verified_count} of {total} selected lamps."
         else:
