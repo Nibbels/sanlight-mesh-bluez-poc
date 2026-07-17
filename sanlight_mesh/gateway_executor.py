@@ -11,6 +11,8 @@ import os
 import re
 import subprocess
 import sys
+import time
+from datetime import datetime
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Mapping
@@ -38,6 +40,24 @@ _NODE_VALUE_RE = re.compile(
     r"Node 0x([0-9A-F]{4}) (?:already )?reports(?: MaxBrightness)? (\d+)%"
 )
 _FINAL_VALUE_RE = re.compile(r"0x([0-9A-F]{4})=(\d+)%")
+
+
+CLOCK_VERIFICATION_TOLERANCE_SECONDS = 5
+SECONDS_PER_DAY = 86_400
+
+
+def _local_seconds_since_midnight() -> int:
+    now = datetime.now().astimezone()
+    return now.hour * 3600 + now.minute * 60 + now.second
+
+
+def _clock_text(seconds: int) -> str:
+    normalized = seconds % SECONDS_PER_DAY
+    return f"{normalized // 3600:02d}:{(normalized % 3600) // 60:02d}:{normalized % 60:02d}"
+
+
+def _circular_clock_difference(reported: int, expected: int) -> int:
+    return ((reported - expected + 43_200) % SECONDS_PER_DAY) - 43_200
 
 
 @dataclass(frozen=True)
@@ -195,7 +215,113 @@ class CliCommandExecutor:
             details={"errors": errors} if errors else {},
         )
 
+    def _clock_write(self, command: GatewayCommand) -> ExecutionResult:
+        targets = self.node_addresses if command.target == "all" else (command.target,)
+        batch_started = time.monotonic()
+        base_seconds = command.seconds_since_midnight
+        node_details: dict[str, dict[str, object]] = {}
+        live_reported: dict[str, LiveStatus] = {}
+        verified_count = 0
+
+        for address in targets:
+            if command.action == "sync-clock":
+                written_seconds = _local_seconds_since_midnight()
+            else:
+                assert base_seconds is not None
+                elapsed = int(time.monotonic() - batch_started)
+                written_seconds = (base_seconds + elapsed) % SECONDS_PER_DAY
+
+            write_started = time.monotonic()
+            write_result = self._run(["set-uptime", address, str(written_seconds)])
+            read_result = self._run(["get-live", address])
+            parsed_live = self._parse_get_live(read_result)
+            details: dict[str, object] = {
+                "writtenSecondsSinceMidnight": written_seconds,
+                "writtenClock": _clock_text(written_seconds),
+                "writeExitCode": write_result.exit_code,
+            }
+
+            if (
+                read_result.exit_code == 0
+                and parsed_live is not None
+                and parsed_live[0] == address
+            ):
+                status = parsed_live[1]
+                live_reported[address] = status
+                reported_seconds = (status.lamp_time_ms // 1000) % SECONDS_PER_DAY
+                if command.action == "sync-clock":
+                    expected_seconds = _local_seconds_since_midnight()
+                else:
+                    elapsed_after_write = int(time.monotonic() - write_started)
+                    expected_seconds = (written_seconds + elapsed_after_write) % SECONDS_PER_DAY
+                difference = _circular_clock_difference(
+                    reported_seconds, expected_seconds
+                )
+                details.update(
+                    {
+                        "reportedSecondsSinceMidnight": reported_seconds,
+                        "reportedClock": _clock_text(reported_seconds),
+                        "expectedSecondsSinceMidnight": expected_seconds,
+                        "verificationDifferenceSeconds": difference,
+                    }
+                )
+                if (
+                    write_result.exit_code == 0
+                    and abs(difference) <= CLOCK_VERIFICATION_TOLERANCE_SECONDS
+                ):
+                    details["status"] = "verified"
+                    verified_count += 1
+                else:
+                    details["status"] = "unconfirmed"
+                    if write_result.exit_code != 0:
+                        details["writeError"] = write_result.summary
+            else:
+                details["status"] = "unconfirmed"
+                details["readbackError"] = read_result.summary
+                if write_result.exit_code != 0:
+                    details["writeError"] = write_result.summary
+
+            node_details[address] = details
+
+        total = len(targets)
+        ok = verified_count == total
+        status = "verified" if ok else "partial" if verified_count else "unconfirmed"
+        if ok:
+            message = (
+                "Lamp clock synchronized with the gateway local clock and verified."
+                if command.action == "sync-clock"
+                else "Requested lamp clock applied and verified."
+            )
+        elif verified_count:
+            message = f"Clock write verified for {verified_count} of {total} selected lamps."
+        else:
+            message = "Clock write could not be verified on any selected lamp."
+        return ExecutionResult(
+            ok=ok,
+            status=status,
+            message=message,
+            reported={},
+            live_reported=live_reported,
+            details={
+                "nodes": node_details,
+                "verificationToleranceSeconds": CLOCK_VERIFICATION_TOLERANCE_SECONDS,
+            },
+        )
+
     def execute(self, command: GatewayCommand) -> ExecutionResult:
+        if command.action == "refresh-gateway-info":
+            return ExecutionResult(
+                ok=True,
+                status="verified",
+                message="Gateway information refreshed without a Mesh operation.",
+                reported={},
+                live_reported={},
+                details={"meshMessagesSent": 0},
+            )
+
+        if command.action in {"sync-clock", "set-clock"}:
+            return self._clock_write(command)
+
         if command.action == "refresh":
             return self.refresh(command.target)
 

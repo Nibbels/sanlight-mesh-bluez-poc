@@ -4,157 +4,104 @@
   "title": "SANlight Mesh gateway command v1",
   "type": "object",
   "additionalProperties": false,
-  "required": [
-    "id",
-    "action",
-    "createdAt",
-    "ttlSeconds"
-  ],
+  "required": ["id", "action", "createdAt", "ttlSeconds"],
   "properties": {
-    "id": {
-      "type": "string",
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
-    },
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"},
     "action": {
       "enum": [
         "set-max",
         "refresh",
         "blackout",
-        "restore-blackout"
+        "restore-blackout",
+        "sync-clock",
+        "set-clock",
+        "refresh-gateway-info"
       ]
     },
-    "target": {
-      "type": "string"
-    },
-    "value": {
-      "type": "integer"
-    },
-    "confirmed": {
-      "type": "boolean"
-    },
-    "createdAt": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "ttlSeconds": {
-      "type": "integer",
-      "minimum": 1,
-      "maximum": 300
-    }
+    "target": {"type": "string"},
+    "value": {"type": "integer"},
+    "secondsSinceMidnight": {"type": "integer", "minimum": 0, "maximum": 86399},
+    "confirmed": {"type": "boolean"},
+    "createdAt": {"type": "string", "format": "date-time"},
+    "ttlSeconds": {"type": "integer", "minimum": 1, "maximum": 300}
   },
   "allOf": [
     {
-      "if": {
-        "properties": {
-          "action": {
-            "const": "set-max"
-          }
-        }
-      },
+      "if": {"properties": {"action": {"const": "set-max"}}},
       "then": {
-        "required": [
-          "target",
-          "value"
-        ],
-        "not": {
-          "required": [
-            "confirmed"
-          ]
-        },
+        "required": ["target", "value"],
+        "not": {"anyOf": [{"required": ["confirmed"]}, {"required": ["secondsSinceMidnight"]}]},
         "properties": {
-          "target": {
-            "pattern": "^[0-9A-Fa-f]{4}$"
-          },
-          "value": {
-            "minimum": 20,
-            "maximum": 100
-          }
+          "target": {"pattern": "^[0-9A-Fa-f]{4}$"},
+          "value": {"minimum": 20, "maximum": 100}
         }
       }
     },
     {
-      "if": {
-        "properties": {
-          "action": {
-            "const": "refresh"
-          }
-        }
-      },
+      "if": {"properties": {"action": {"const": "refresh"}}},
       "then": {
         "not": {
           "anyOf": [
-            {
-              "required": [
-                "value"
-              ]
-            },
-            {
-              "required": [
-                "confirmed"
-              ]
-            }
+            {"required": ["value"]},
+            {"required": ["confirmed"]},
+            {"required": ["secondsSinceMidnight"]}
           ]
         },
+        "properties": {"target": {"pattern": "^(all|[0-9A-Fa-f]{4})$"}}
+      }
+    },
+    {
+      "if": {"properties": {"action": {"const": "blackout"}}},
+      "then": {
+        "required": ["target", "confirmed"],
+        "not": {"anyOf": [{"required": ["value"]}, {"required": ["secondsSinceMidnight"]}]},
         "properties": {
-          "target": {
-            "pattern": "^(all|[0-9A-Fa-f]{4})$"
-          }
+          "target": {"pattern": "^(all|[0-9A-Fa-f]{4})$"},
+          "confirmed": {"const": true}
         }
       }
     },
     {
-      "if": {
-        "properties": {
-          "action": {
-            "const": "blackout"
-          }
-        }
-      },
+      "if": {"properties": {"action": {"const": "restore-blackout"}}},
       "then": {
-        "required": [
-          "target",
-          "confirmed"
-        ],
-        "not": {
-          "required": [
-            "value"
-          ]
-        },
-        "properties": {
-          "target": {
-            "pattern": "^(all|[0-9A-Fa-f]{4})$"
-          },
-          "confirmed": {
-            "const": true
-          }
-        }
+        "required": ["confirmed"],
+        "not": {"anyOf": [{"required": ["value"]}, {"required": ["secondsSinceMidnight"]}]},
+        "properties": {"target": {"const": "latest"}, "confirmed": {"const": true}}
       }
     },
     {
-      "if": {
-        "properties": {
-          "action": {
-            "const": "restore-blackout"
-          }
-        }
-      },
+      "if": {"properties": {"action": {"const": "sync-clock"}}},
       "then": {
-        "required": [
-          "confirmed"
-        ],
+        "required": ["target"],
         "not": {
-          "required": [
-            "value"
+          "anyOf": [
+            {"required": ["value"]},
+            {"required": ["confirmed"]},
+            {"required": ["secondsSinceMidnight"]}
           ]
         },
-        "properties": {
-          "target": {
-            "const": "latest"
-          },
-          "confirmed": {
-            "const": true
-          }
-        }
+        "properties": {"target": {"pattern": "^(all|[0-9A-Fa-f]{4})$"}}
+      }
+    },
+    {
+      "if": {"properties": {"action": {"const": "set-clock"}}},
+      "then": {
+        "required": ["target", "secondsSinceMidnight"],
+        "not": {"anyOf": [{"required": ["value"]}, {"required": ["confirmed"]}]},
+        "properties": {"target": {"pattern": "^(all|[0-9A-Fa-f]{4})$"}}
+      }
+    },
+    {
+      "if": {"properties": {"action": {"const": "refresh-gateway-info"}}},
+      "then": {
+        "not": {
+          "anyOf": [
+            {"required": ["value"]},
+            {"required": ["confirmed"]},
+            {"required": ["secondsSinceMidnight"]}
+          ]
+        },
+        "properties": {"target": {"const": "gateway"}}
       }
     }
   ]

@@ -4,8 +4,9 @@ All notable changes to this community project are documented here. The project i
 
 ## Unreleased
 
-- Hardware-validate the current-output percentage against the SANlight app: raw `334` is `33.4%` in MQTT/ioBroker and appears as the rounded value `34%` in the app.
-- Clarify that the raw vendor field remains part of MQTT API v1 for validation and compatibility while clients should normally display the percentage.
+- Add explicit MQTT clock controls for one lamp or all lamps: `sync-clock`, `set-clock` and the Mesh-free `refresh-gateway-info` action.
+- Replace MQTT `lampTimeMs` with `lampClockSeconds` (`0..86399`) and second-resolution `lampClock`; keep millisecond handling internal to the vendor protocol implementation.
+- Publish the gateway local-clock snapshot in retained `gateway/info`, verify every clock write by live readback, and report partial per-lamp outcomes.
 
 ## 0.2.0 - 2026-07-17
 

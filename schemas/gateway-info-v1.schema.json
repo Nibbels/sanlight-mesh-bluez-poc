@@ -12,83 +12,25 @@
     "senderAddress",
     "nodes",
     "writePolicy",
+    "localClockSeconds",
+    "localClock",
     "timestamp"
   ],
   "properties": {
-    "protocolVersion": {
-      "const": 1
-    },
-    "serviceVersion": {
-      "type": "string",
-      "minLength": 1
-    },
-    "gatewayId": {
-      "type": "string",
-      "pattern": "^[a-z0-9][a-z0-9_-]{0,47}$"
-    },
-    "meshUuid": {
-      "type": "string",
-      "minLength": 1
-    },
-    "senderAddress": {
-      "type": "string",
-      "pattern": "^[0-9A-F]{4}$"
-    },
-    "commandTopic": {
-      "type": "string",
-      "minLength": 1
-    },
-    "nodes": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": true,
-        "required": [
-          "address",
-          "name"
-        ],
-        "properties": {
-          "address": {
-            "type": "string",
-            "pattern": "^[0-9A-F]{4}$"
-          },
-          "name": {
-            "type": "string"
-          }
-        }
-      }
-    },
-    "writePolicy": {
-      "type": "object"
-    },
-    "sequenceNumber": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 16777215
-    },
-    "sequenceRemaining": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 16777215
-    },
-    "sequenceRemainingPercent": {
-      "type": "number",
-      "minimum": 0,
-      "maximum": 100
-    },
-    "sequenceStatus": {
-      "enum": [
-        "ok",
-        "warning",
-        "critical"
-      ]
-    },
-    "sequenceWarning": {
-      "type": "string"
-    },
-    "timestamp": {
-      "type": "string",
-      "format": "date-time"
-    }
+    "protocolVersion": {"const": 1},
+    "serviceVersion": {"type": "string"},
+    "gatewayId": {"type": "string"},
+    "meshUuid": {"type": "string"},
+    "senderAddress": {"type": "string", "pattern": "^[0-9A-F]{4}$"},
+    "nodes": {"type": "array"},
+    "writePolicy": {"type": "object"},
+    "localClockSeconds": {"type": "integer", "minimum": 0, "maximum": 86399},
+    "localClock": {"type": "string", "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$"},
+    "sequenceNumber": {"type": "integer", "minimum": 0, "maximum": 16777215},
+    "sequenceRemaining": {"type": "integer", "minimum": 0, "maximum": 16777215},
+    "timestamp": {"type": "string", "format": "date-time"},
+    "sequenceStatus": {"enum": ["ok", "warning", "critical"]},
+    "sequenceRemainingPercent": {"type": "number", "minimum": 0, "maximum": 100},
+    "sequenceWarning": {"type": "string"}
   }
 }

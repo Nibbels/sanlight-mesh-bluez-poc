@@ -6,7 +6,7 @@ The gateway topic root is:
 sanlightmesh/v1/<gateway-id>
 ```
 
-The protocol major version is part of the topic. Breaking changes require a new major topic such as `v2`.
+The protocol major version is part of the topic. During the project's pre-1.0 releases, coordinated compatibility changes may remain on `v1` when they are called out explicitly in both repositories. The v0.3.0 clock work deliberately replaces `lampTimeMs` with second-resolution fields.
 
 Examples below use the illustrative unicast address `1234`. Replace it with an address reported by `list-nodes` for the actual CDB.
 
@@ -92,6 +92,49 @@ read does not make the already verified MaxBrightness write fail; instead,
 
 Separate brightness writes are subject to the persistent ten-second guard. A command whose TTL expires while waiting for that guard returns `expired` with `details.meshMessagesSent = 0`.
 
+### Synchronize lamp clock
+
+```json
+{
+	"id": "sync-clock-1234-001",
+	"action": "sync-clock",
+	"target": "1234",
+	"createdAt": "2026-07-17T18:30:00Z",
+	"ttlSeconds": 30
+}
+```
+
+Use target `all` to synchronize every lamp. The gateway samples its current local clock immediately before each sequential lamp write. This command simply copies the gateway's current local clock.
+
+### Set arbitrary lamp clock
+
+```json
+{
+	"id": "set-clock-1234-001",
+	"action": "set-clock",
+	"target": "1234",
+	"secondsSinceMidnight": 21600,
+	"createdAt": "2026-07-17T18:30:00Z",
+	"ttlSeconds": 30
+}
+```
+
+`secondsSinceMidnight` is a strict integer in `0..86399`. MQTT transports no clock strings or milliseconds. For target `all`, the gateway adds monotonic elapsed time before each sequential write so the lamps finish approximately aligned. Every write is followed by a live readback and verified with a five-second tolerance. Per-lamp outcomes are returned below `details.nodes`.
+
+### Refresh gateway information
+
+```json
+{
+	"id": "refresh-gateway-info-001",
+	"action": "refresh-gateway-info",
+	"target": "gateway",
+	"createdAt": "2026-07-17T18:30:00Z",
+	"ttlSeconds": 30
+}
+```
+
+This republishes retained `gateway/info` with a fresh local-clock snapshot. It performs no Bluetooth Mesh operation and consumes no Mesh Sequence Number.
+
 ### Blackout
 
 ```json
@@ -138,8 +181,8 @@ MQTT v1 deliberately accepts only `latest`; callers cannot supply local paths.
 		"reported": { "1234": 48 },
 		"liveReported": {
 			"1234": {
-				"lampTimeMs": 61265168,
-				"lampClock": "17:01:05.168",
+				"lampClockSeconds": 61265,
+				"lampClock": "17:01:05",
 				"liveBrightnessRaw": 461,
 				"liveBrightnessPercentEstimate": 46.1
 			}
@@ -182,13 +225,16 @@ When a completed QoS 1 command ID is delivered again, the gateway republishes th
 	"verified": true,
 	"verifiedAt": "2026-07-16T20:30:04Z",
 	"liveVerified": true,
-	"lampTimeMs": 61265168,
-	"lampClock": "17:01:05.168",
+	"lampClockSeconds": 61265,
+	"lampClock": "17:01:05",
 	"liveBrightnessRaw": 461,
 	"liveBrightnessPercentEstimate": 46.1,
 	"liveVerifiedAt": "2026-07-16T20:30:05Z"
 }
 ```
+
+
+`lampClockSeconds` is the last observed lamp time as an integer in `0..86399`; `lampClock` is the same snapshot rendered as `HH:MM:SS`. These states do not tick between reads. The former `lampTimeMs` field is removed in v0.3.0; millisecond handling remains internal to the vendor protocol layer.
 
 `maxBrightness` and `liveBrightnessRaw` describe different things:
 
@@ -227,7 +273,8 @@ The retained `gateway/info` object includes:
 - detected node metadata;
 - current sender Sequence Number and remaining 24-bit budget;
 - `sequenceStatus`;
-- effective write policy, including minimum and recommended intervals.
+- effective write policy, including minimum and recommended intervals;
+- `localClockSeconds` and `localClock`, sampled when the gateway-info payload is published. The existing `timestamp` identifies the snapshot time.
 
 ## Schemas
 

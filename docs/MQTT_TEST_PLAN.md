@@ -60,8 +60,8 @@ firmware versions.
 Use one lamp while its daily profile is stable:
 
 1. Record `maxBrightness`, `liveBrightnessRaw`,
-   `liveBrightnessPercentEstimate`, `lampTimeMs` and `lampClock` after a manual
-   read-only refresh.
+   `liveBrightnessPercentEstimate`, `lampClockSeconds` and `lampClock` after a
+   manual read-only refresh.
 2. Change MaxBrightness to a nearby safe value in `20..100` and wait for the
    verified write plus its live-status read.
 3. Trigger another manual refresh and compare the raw live value before and
@@ -87,6 +87,28 @@ the gateway and native adapter. The SANlight app simultaneously displayed `34%`
 for the same lamp. This confirms the `raw / 10` scale and shows that the app
 rounds the display to a whole percentage. It does not establish a calibrated
 relationship to electrical power, photon flux or PPFD.
+
+## Clock-control validation for v0.3.0
+
+Clock control remains manual and snapshot-based. There is no automatic synchronization,
+drift marker, timezone policy or background clock polling.
+
+For one lamp with its current clock recorded:
+
+1. Trigger a read-only refresh and record `lampClockSeconds`, `lampClock` and
+   `liveVerifiedAt`.
+2. Trigger `refresh-gateway-info` and confirm that `localClockSeconds`,
+   `localClock` and the gateway-info `timestamp` update without any Mesh command.
+3. Apply a nearby arbitrary target time, wait for the verified write/readback result,
+   and confirm that the observed lamp clock advances by only the expected execution time.
+4. Trigger `sync-clock`, wait for verification, and compare the refreshed lamp snapshot
+   with the gateway-local snapshot. Minute-level agreement is sufficient for this
+   application; the gateway's internal write verification uses a few seconds of tolerance.
+5. Restore the original or intended lamp time when the test used an artificial target.
+
+For an all-lamps test, confirm that the result reports each node separately and that a
+failed node does not hide successful nodes. Avoid repeating clock writes unnecessarily;
+each write and readback consumes Mesh Sequence Numbers.
 
 ## Earlier gateway safety validation — 2026-07-15
 

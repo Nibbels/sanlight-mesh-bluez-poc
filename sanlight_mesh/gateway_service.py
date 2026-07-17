@@ -39,11 +39,22 @@ from .traffic_safety import BRIGHTNESS_WRITE_MIN_INTERVAL_SECONDS
 from .state import StateError, read_state, validate_state_identity
 
 
-SERVICE_VERSION = "0.1.1"
+SERVICE_VERSION = "0.2.0"
 
 
 class GatewayServiceError(RuntimeError):
     pass
+
+
+def _clock_text(seconds: int) -> str:
+    normalized = seconds % 86_400
+    return f"{normalized // 3600:02d}:{(normalized % 3600) // 60:02d}:{normalized % 60:02d}"
+
+
+def _gateway_local_clock() -> tuple[datetime, int, str]:
+    observed = datetime.now().astimezone()
+    seconds = observed.hour * 3600 + observed.minute * 60 + observed.second
+    return observed, seconds, _clock_text(seconds)
 
 
 class SanlightMqttGateway:
@@ -171,8 +182,8 @@ class SanlightMqttGateway:
         if state.live_status is not None and state.live_verified_at is not None:
             payload.update(
                 {
-                    "lampTimeMs": state.live_status.lamp_time_ms,
-                    "lampClock": state.live_status.lamp_clock,
+                    "lampClockSeconds": (state.live_status.lamp_time_ms // 1000) % 86_400,
+                    "lampClock": _clock_text(state.live_status.lamp_time_ms // 1000),
                     "liveBrightnessRaw": state.live_status.brightness_raw,
                     "liveBrightnessPercentEstimate": (
                         state.live_status.brightness_percent_estimate
@@ -189,6 +200,7 @@ class SanlightMqttGateway:
             self.publish_node_state(address, cached=True)
 
     def publish_gateway_info(self) -> None:
+        observed, local_clock_seconds, local_clock = _gateway_local_clock()
         payload: dict[str, Any] = {
             "protocolVersion": PROTOCOL_VERSION,
             "serviceVersion": SERVICE_VERSION,
@@ -206,8 +218,12 @@ class SanlightMqttGateway:
                 "minimumWriteIntervalSeconds": BRIGHTNESS_WRITE_MIN_INTERVAL_SECONDS,
                 "coalesceWindowSeconds": self.config.coalesce_window_seconds,
                 "recommendedAutomationIntervalSeconds": 60,
+                "clockSecondsRange": {"minimum": 0, "maximum": 86399},
+                "clockVerificationToleranceSeconds": 5,
             },
-            "timestamp": isoformat_utc(utc_now()),
+            "localClockSeconds": local_clock_seconds,
+            "localClock": local_clock,
+            "timestamp": isoformat_utc(observed),
         }
         payload.update(self.sequence_state)
         remaining = self.sequence_state.get("sequenceRemaining")
@@ -280,7 +296,7 @@ class SanlightMqttGateway:
                     "retained commands are rejected to prevent replay after reconnect"
                 )
             command = decode_command(message.payload)
-            if command.target not in ("all", "latest") and command.target not in self.nodes:
+            if command.target not in ("all", "latest", "gateway") and command.target not in self.nodes:
                 raise GatewayProtocolError(
                     f"target {command.target} is not a SANlight node in this CDB"
                 )
@@ -376,7 +392,7 @@ class SanlightMqttGateway:
         if utc_now().timestamp() + remaining >= command.expires_at.timestamp():
             return False
         print(
-            f"Waiting {remaining:.1f}s for the brightness-write safety interval "
+            f"Waiting {remaining:.1f}s for the Mesh-write safety interval "
             f"before command {command.command_id}."
         )
         return not self.stop_event.wait(remaining)
@@ -454,7 +470,7 @@ class SanlightMqttGateway:
                         ok=False,
                         status="expired",
                         message=(
-                            "Command expired while waiting for the brightness-write "
+                            "Command expired while waiting for the Mesh-write "
                             "safety interval; no Mesh write was sent."
                         ),
                         details={"meshMessagesSent": 0},
@@ -468,6 +484,11 @@ class SanlightMqttGateway:
                         "action": command.action,
                         "target": command.target,
                         **({"requested": command.value} if command.value is not None else {}),
+                        **(
+                            {"requestedSecondsSinceMidnight": command.seconds_since_midnight}
+                            if command.seconds_since_midnight is not None
+                            else {}
+                        ),
                     },
                 )
                 execution = self.executor.execute(command)
@@ -485,6 +506,12 @@ class SanlightMqttGateway:
                         addresses_to_publish.add(address)
 
                 if command.action == "refresh":
+                    expected_live = (
+                        tuple(self.nodes)
+                        if command.target == "all"
+                        else (command.target,)
+                    )
+                elif command.action in {"sync-clock", "set-clock"}:
                     expected_live = (
                         tuple(self.nodes)
                         if command.target == "all"
@@ -517,8 +544,8 @@ class SanlightMqttGateway:
 
                 live_reported = {
                     address: {
-                        "lampTimeMs": status.lamp_time_ms,
-                        "lampClock": status.lamp_clock,
+                        "lampClockSeconds": (status.lamp_time_ms // 1000) % 86_400,
+                        "lampClock": _clock_text(status.lamp_time_ms // 1000),
                         "liveBrightnessRaw": status.brightness_raw,
                         "liveBrightnessPercentEstimate": (
                             status.brightness_percent_estimate
@@ -542,9 +569,10 @@ class SanlightMqttGateway:
                     f"Command {command.command_id} completed: "
                     f"status={execution.status} ok={execution.ok}."
                 )
-                sequence_state = self.executor.sender_sequence_state()
-                if sequence_state is not None:
-                    self.sequence_state = sequence_state
+                if command.action != "refresh-gateway-info":
+                    sequence_state = self.executor.sender_sequence_state()
+                    if sequence_state is not None:
+                        self.sequence_state = sequence_state
                 try:
                     self.publish_gateway_info()
                 except Exception as exc:

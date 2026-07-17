@@ -26,11 +26,18 @@ class GatewayCommand:
     created_at: datetime
     expires_at: datetime
     value: int | None = None
+    seconds_since_midnight: int | None = None
     confirmed: bool = False
 
     @property
     def is_write(self) -> bool:
-        return self.action in {"set-max", "blackout", "restore-blackout"}
+        return self.action in {
+            "set-max",
+            "blackout",
+            "restore-blackout",
+            "sync-clock",
+            "set-clock",
+        }
 
     def expired(self, now: datetime | None = None) -> bool:
         current = now or datetime.now(timezone.utc)
@@ -70,6 +77,14 @@ def normalize_node(value: Any, *, allow_all: bool) -> str:
     return f"{parsed:04X}"
 
 
+def _forbid(document: Mapping[str, Any], action: str, *fields: str) -> None:
+    present = [field for field in fields if field in document]
+    if present:
+        raise GatewayProtocolError(
+            f"{action} does not accept " + ", ".join(sorted(present))
+        )
+
+
 def decode_command(payload: bytes, *, now: datetime | None = None) -> GatewayCommand:
     if len(payload) > MAX_COMMAND_BYTES:
         raise GatewayProtocolError(
@@ -84,7 +99,16 @@ def decode_command(payload: bytes, *, now: datetime | None = None) -> GatewayCom
     if not isinstance(document, dict):
         raise GatewayProtocolError("command payload must be a JSON object")
 
-    common_keys = {"id", "action", "target", "value", "confirmed", "createdAt", "ttlSeconds"}
+    common_keys = {
+        "id",
+        "action",
+        "target",
+        "value",
+        "secondsSinceMidnight",
+        "confirmed",
+        "createdAt",
+        "ttlSeconds",
+    }
     unknown = set(document) - common_keys
     if unknown:
         raise GatewayProtocolError(
@@ -97,10 +121,17 @@ def decode_command(payload: bytes, *, now: datetime | None = None) -> GatewayCom
             "id must contain 1..128 letters, digits, '.', '_', ':' or '-'"
         )
     action = document.get("action")
-    if action not in {"set-max", "refresh", "blackout", "restore-blackout"}:
-        raise GatewayProtocolError(
-            "action must be set-max, refresh, blackout or restore-blackout"
-        )
+    actions = {
+        "set-max",
+        "refresh",
+        "blackout",
+        "restore-blackout",
+        "sync-clock",
+        "set-clock",
+        "refresh-gateway-info",
+    }
+    if action not in actions:
+        raise GatewayProtocolError("action is not supported by MQTT API v1")
 
     created_at = parse_timestamp(document.get("createdAt"), "createdAt")
     ttl = document.get("ttlSeconds")
@@ -112,6 +143,7 @@ def decode_command(payload: bytes, *, now: datetime | None = None) -> GatewayCom
         raise GatewayProtocolError("createdAt is more than 60 seconds in the future")
 
     value: int | None = None
+    seconds_since_midnight: int | None = None
     confirmed = document.get("confirmed", False)
     if not isinstance(confirmed, bool):
         raise GatewayProtocolError("confirmed must be true or false")
@@ -124,19 +156,16 @@ def decode_command(payload: bytes, *, now: datetime | None = None) -> GatewayCom
         if not 20 <= raw_value <= 100:
             raise GatewayProtocolError("set-max value must be between 20 and 100")
         value = raw_value
-        if "confirmed" in document:
-            raise GatewayProtocolError("set-max does not accept confirmed")
+        _forbid(document, action, "confirmed", "secondsSinceMidnight")
     elif action == "refresh":
         target = normalize_node(document.get("target", "all"), allow_all=True)
-        if "value" in document or "confirmed" in document:
-            raise GatewayProtocolError("refresh does not accept value or confirmed")
+        _forbid(document, action, "value", "confirmed", "secondsSinceMidnight")
     elif action == "blackout":
         target = normalize_node(document.get("target"), allow_all=True)
         if not confirmed:
             raise GatewayProtocolError("blackout requires confirmed=true")
-        if "value" in document:
-            raise GatewayProtocolError("blackout does not accept value")
-    else:
+        _forbid(document, action, "value", "secondsSinceMidnight")
+    elif action == "restore-blackout":
         target = document.get("target", "latest")
         if target != "latest":
             raise GatewayProtocolError(
@@ -144,14 +173,35 @@ def decode_command(payload: bytes, *, now: datetime | None = None) -> GatewayCom
             )
         if not confirmed:
             raise GatewayProtocolError("restore-blackout requires confirmed=true")
-        if "value" in document:
-            raise GatewayProtocolError("restore-blackout does not accept value")
+        _forbid(document, action, "value", "secondsSinceMidnight")
+    elif action == "sync-clock":
+        target = normalize_node(document.get("target"), allow_all=True)
+        _forbid(document, action, "value", "confirmed", "secondsSinceMidnight")
+    elif action == "set-clock":
+        target = normalize_node(document.get("target"), allow_all=True)
+        raw_seconds = document.get("secondsSinceMidnight")
+        if isinstance(raw_seconds, bool) or not isinstance(raw_seconds, int):
+            raise GatewayProtocolError("set-clock secondsSinceMidnight must be an integer")
+        if not 0 <= raw_seconds <= 86_399:
+            raise GatewayProtocolError(
+                "set-clock secondsSinceMidnight must be between 0 and 86399"
+            )
+        seconds_since_midnight = raw_seconds
+        _forbid(document, action, "value", "confirmed")
+    else:
+        target = document.get("target", "gateway")
+        if target != "gateway":
+            raise GatewayProtocolError(
+                "refresh-gateway-info accepts only target='gateway'"
+            )
+        _forbid(document, action, "value", "confirmed", "secondsSinceMidnight")
 
     return GatewayCommand(
         command_id=command_id,
         action=action,
         target=target,
         value=value,
+        seconds_since_midnight=seconds_since_midnight,
         confirmed=confirmed,
         created_at=created_at,
         expires_at=expires_at,
@@ -180,6 +230,8 @@ def make_result(
         result.update({"action": command.action, "target": command.target})
         if command.value is not None:
             result["requested"] = command.value
+        if command.seconds_since_midnight is not None:
+            result["requestedSecondsSinceMidnight"] = command.seconds_since_midnight
     if details:
         result["details"] = dict(details)
     return result

@@ -109,9 +109,7 @@ reversible brightness writes, retained-command rejection, deduplication,
 expiry, coalescing, rate limiting and restart recovery. See
 [docs/MQTT_TEST_PLAN.md](docs/MQTT_TEST_PLAN.md) for the detailed record.
 
-Version `0.2.0` is prepared as the first public GitHub release. The project
-remains pre-1.0, so compatibility changes are still possible and are documented
-in the changelog.
+Version `0.2.0` is the immutable released baseline. Clock control is being developed for `0.3.0`. The project remains pre-1.0, so coordinated compatibility changes are documented explicitly in both repositories.
 
 The read-only current-output percentage was additionally compared with the
 SANlight app on 2026-07-17: the gateway value `33.4%` appeared as the app's
@@ -120,6 +118,10 @@ compatibility, while user interfaces should normally present the percentage.
 
 Other SANlight firmware versions, Mesh layouts and network-security designs
 require their own validation.
+
+## Lamp-clock handling
+
+MQTT API v1 exposes the last observed lamp clock as whole seconds since local midnight plus `HH:MM:SS`. Explicit commands can copy the gateway Raspberry Pi's current local clock or set an arbitrary lamp time. Clock values are snapshots and are never synchronized automatically. See [docs/MQTT_API.md](docs/MQTT_API.md).
 
 ## Documentation
 

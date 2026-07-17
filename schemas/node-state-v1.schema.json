@@ -11,7 +11,8 @@
     "maxBrightness",
     "off",
     "verified",
-    "verifiedAt"
+    "verifiedAt",
+    "liveVerified"
   ],
   "properties": {
     "protocolVersion": {
@@ -45,14 +46,14 @@
     "liveVerified": {
       "type": "boolean"
     },
-    "lampTimeMs": {
+    "lampClockSeconds": {
       "type": "integer",
       "minimum": 0,
-      "maximum": 4294967295
+      "maximum": 86399
     },
     "lampClock": {
       "type": "string",
-      "pattern": "^[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}$"
+      "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$"
     },
     "liveBrightnessRaw": {
       "type": "integer",
@@ -69,45 +70,56 @@
       "format": "date-time"
     }
   },
-  "oneOf": [
+  "allOf": [
     {
-      "properties": {
-        "liveVerified": {
-          "const": false
-        }
-      },
-      "not": {
-        "anyOf": [
-          {
-            "required": ["lampTimeMs"]
-          },
-          {
-            "required": ["lampClock"]
-          },
-          {
-            "required": ["liveBrightnessRaw"]
-          },
-          {
-            "required": ["liveBrightnessPercentEstimate"]
-          },
-          {
-            "required": ["liveVerifiedAt"]
+      "if": {
+        "properties": {
+          "liveVerified": {
+            "const": true
           }
+        },
+        "required": [
+          "liveVerified"
         ]
-      }
-    },
-    {
-      "required": [
-        "liveVerified",
-        "lampTimeMs",
-        "lampClock",
-        "liveBrightnessRaw",
-        "liveBrightnessPercentEstimate",
-        "liveVerifiedAt"
-      ],
-      "properties": {
-        "liveVerified": {
-          "const": true
+      },
+      "then": {
+        "required": [
+          "lampClockSeconds",
+          "lampClock",
+          "liveBrightnessRaw",
+          "liveBrightnessPercentEstimate",
+          "liveVerifiedAt"
+        ]
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "lampClockSeconds"
+              ]
+            },
+            {
+              "required": [
+                "lampClock"
+              ]
+            },
+            {
+              "required": [
+                "liveBrightnessRaw"
+              ]
+            },
+            {
+              "required": [
+                "liveBrightnessPercentEstimate"
+              ]
+            },
+            {
+              "required": [
+                "liveVerifiedAt"
+              ]
+            }
+          ]
         }
       }
     }
