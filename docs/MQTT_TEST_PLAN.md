@@ -82,6 +82,29 @@ Run the following compact matrix on the gateway Pi and through MQTT:
 Malformed, truncated and unexpected layouts are covered with offline fixtures;
 do not intentionally send malformed or daylight-write PDUs to real lamps.
 
+### Initial direct hardware validation — 2026-07-18
+
+The direct `get-daylight` command was run against both reference lamps. Both
+returned the same configuration ID, the profile name `100% 12:12`, and eight
+ordered values matching a 06:00–18:00 profile with 30-minute ramps. The
+configuration-only `0x04` layout matched the initial parser hypothesis exactly.
+
+The combined `0x0F` response was also captured and confirms this prefix before
+the same configuration object:
+
+```text
+uint32_le lamp time in milliseconds
+uint16_le live brightness raw value (percentage × 10)
+uint8     MaxBrightness percentage
+```
+
+For the captured run, both lamps reported live brightness raw `300` and
+MaxBrightness `30`. The second parser revision therefore consumes the combined
+response directly and retains the `0x03` fallback only for unknown firmware
+layouts or missing `0x0F` responses. No daylight write was sent. Repeated reads,
+MQTT `all`, unavailable-node behavior and profile persistence remain to be
+validated.
+
 ## Live-output validation procedure
 
 The initial scale comparison is complete: the gateway percentage matched the

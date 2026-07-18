@@ -54,34 +54,64 @@ class DaylightProtocolTest(unittest.TestCase):
         self.assertEqual(document["rawPduHex"], pdu.hex())
         self.assertEqual(document["configuration"]["values"][1]["time"], "06:00")
 
-    def test_combined_status_accepts_live_prefix_and_suffix_layouts(self):
-        live = (38_310_000).to_bytes(4, "little") + (680).to_bytes(2, "little")
-        configuration = daylight_parameters(name="Vegetative 18/6")
+    def test_combined_status_decodes_hardware_confirmed_prefix(self):
+        pdu = bytes.fromhex(
+            "cf8b0a"
+            "b7be7803"  # lamp clock: 58,244,791 ms
+            "2c01"      # live brightness raw: 300 => 30.0%
+            "1e"        # MaxBrightness: 30%
+            "99367b38"  # configuration id: 947,599,001
+            "08"
+            "000000"
+            "670100"
+            "680114"
+            "860164"
+            "1a0464"
+            "380414"
+            "390400"
+            "a00500"
+            "313030252031323a313200"
+        )
+        status = decode_daylight_status_pdu(
+            pdu,
+            request_opcode=SANLIGHT_GET_COMBINED_DAYLIGHT_DATA_OPCODE,
+        )
 
-        for layout, parameters in (
-            ("combined-live-prefix-v1", live + configuration),
-            ("combined-live-suffix-v1", configuration + live),
-        ):
-            with self.subTest(layout=layout):
-                pdu = bytes.fromhex("cf8b0a") + parameters
-                status = decode_daylight_status_pdu(
-                    pdu,
-                    request_opcode=SANLIGHT_GET_COMBINED_DAYLIGHT_DATA_OPCODE,
-                )
-                self.assertTrue(status.parsed)
-                self.assertEqual(status.parser_layout, layout)
-                self.assertEqual(status.lamp_time_ms, 38_310_000)
-                self.assertEqual(status.live_brightness_raw, 680)
-                self.assertEqual(status.configuration.name, "Vegetative 18/6")
+        self.assertTrue(status.parsed)
+        self.assertEqual(status.parser_layout, "combined-live-max-prefix-v1")
+        self.assertEqual(status.lamp_time_ms, 58_244_791)
+        self.assertEqual(status.live_brightness_raw, 300)
+        self.assertEqual(status.max_brightness, 30)
+        self.assertEqual(status.configuration.configuration_id, 947_599_001)
+        self.assertEqual(status.configuration.name, "100% 12:12")
+        self.assertEqual(
+            [
+                (value.time_in_minutes, value.brightness)
+                for value in status.configuration.values
+            ],
+            [
+                (0, 0),
+                (359, 0),
+                (360, 20),
+                (390, 100),
+                (1050, 100),
+                (1080, 20),
+                (1081, 0),
+                (1440, 0),
+            ],
+        )
+        document = status.to_document()
+        self.assertEqual(document["combinedStatus"]["lampClock"], "16:10:44.791")
+        self.assertEqual(document["combinedStatus"]["maxBrightness"], 30)
 
-    def test_combined_status_accepts_exact_configuration_only_layout(self):
+    def test_unconfirmed_combined_layout_remains_raw_only(self):
         pdu = bytes.fromhex("cf8b0a") + daylight_parameters()
         status = decode_daylight_status_pdu(
             pdu,
             request_opcode=SANLIGHT_GET_COMBINED_DAYLIGHT_DATA_OPCODE,
         )
-        self.assertTrue(status.parsed)
-        self.assertEqual(status.parser_layout, "combined-configuration-only-v1")
+        self.assertFalse(status.parsed)
+        self.assertIn("daylight value count", status.parse_error)
 
     def test_malformed_status_remains_available_as_raw_only(self):
         pdu = bytes.fromhex("c48b0a") + daylight_parameters(values=((60, 20), (30, 100)))

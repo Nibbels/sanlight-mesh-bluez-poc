@@ -246,9 +246,11 @@ When a completed QoS 1 command ID is delivered again, the gateway republishes th
 
 For `read-daylight`, `details.daylightReported` is keyed by lamp address. Each
 entry contains request/status opcodes, `rawPduHex`, `rawParametersHex`, a
-`parsed` flag, and—when the current conservative parser recognizes the
-payload—a `configuration` object. A target can therefore return useful raw
-evidence even when the overall command is `partial`.
+`parsed` flag, and—when the validated parser recognizes the payload—a
+`configuration` object. The combined `0x0F` response additionally exposes a
+`combinedStatus` snapshot containing lamp time, live brightness and
+MaxBrightness. A target can therefore return useful raw evidence even when the
+overall command is `partial`.
 
 ## Node state example
 
@@ -272,14 +274,21 @@ evidence even when the overall command is `partial`.
 		"lastReadAt": "2026-07-18T20:30:05Z",
 		"lastReadOk": true,
 		"verifiedAt": "2026-07-18T20:30:05Z",
-		"requestOpcode": 3,
-		"requestOpcodeHex": "0x03",
-		"statusOpcode": 4,
-		"statusOpcodeHex": "0x04",
-		"rawPduHex": "c48b0a...",
+		"requestOpcode": 14,
+		"requestOpcodeHex": "0x0E",
+		"statusOpcode": 15,
+		"statusOpcodeHex": "0x0F",
+		"rawPduHex": "cf8b0a...",
 		"rawParametersHex": "...",
 		"parsed": true,
-		"parserLayout": "configuration-v1",
+		"parserLayout": "combined-live-max-prefix-v1",
+		"combinedStatus": {
+			"lampTimeMs": 58244791,
+			"lampClock": "16:10:44.791",
+			"liveBrightnessRaw": 300,
+			"liveBrightnessPercentEstimate": 30.0,
+			"maxBrightness": 30
+		},
 		"configuration": {
 			"id": 7,
 			"name": "Flower 12/12",
@@ -296,7 +305,7 @@ evidence even when the overall command is `partial`.
 ```
 
 
-`lampClockSeconds` is the last observed lamp time as an integer in `0..86399`; `lampClock` is the same snapshot rendered as `HH:MM:SS`. These states do not tick between reads. The former `lampTimeMs` field is removed in v0.3.0; millisecond handling remains internal to the vendor protocol layer.
+`lampClockSeconds` is the last observed lamp time as an integer in `0..86399`; `lampClock` is the same snapshot rendered as `HH:MM:SS`. These states do not tick between reads. The former top-level `lampTimeMs` field was removed in v0.3.0. A daylight combined-response snapshot may contain `daylightConfiguration.combinedStatus.lampTimeMs` so the complete vendor response remains available.
 
 `maxBrightness` and `liveBrightnessRaw` describe different things:
 

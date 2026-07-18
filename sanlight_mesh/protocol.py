@@ -303,6 +303,7 @@ class DaylightStatus:
     parser_layout: str | None = None
     lamp_time_ms: int | None = None
     live_brightness_raw: int | None = None
+    max_brightness: int | None = None
     parse_error: str | None = None
 
     @property
@@ -325,12 +326,17 @@ class DaylightStatus:
             document["configuration"] = self.configuration.to_document()
         if self.lamp_time_ms is not None and self.live_brightness_raw is not None:
             live = LiveStatus(self.lamp_time_ms, self.live_brightness_raw)
-            document["combinedStatus"] = {
+            combined_status: dict[str, object] = {
                 "lampTimeMs": live.lamp_time_ms,
                 "lampClock": live.lamp_clock,
                 "liveBrightnessRaw": live.brightness_raw,
                 "liveBrightnessPercentEstimate": live.brightness_percent_estimate,
             }
+            if self.max_brightness is not None:
+                combined_status["maxBrightness"] = validate_reported_max_brightness(
+                    self.max_brightness
+                )
+            document["combinedStatus"] = combined_status
         if self.parse_error is not None:
             document["parseError"] = self.parse_error
         return document
@@ -466,83 +472,36 @@ def decode_daylight_status_pdu(
         except ValueError as exc:
             errors.append(str(exc))
     else:
-        # The APK's CombinedDaylightData tests compare time, current brightness,
-        # configuration id and values. Try the currently evidenced exact layouts
-        # independently and reject ambiguity instead of selecting a plausible but
-        # potentially wrong interpretation.
-        candidates: list[DaylightStatus] = []
-
-        if len(parameters) >= 6:
-            try:
-                live = decode_uptime_brightness_status_parameters(parameters[:6])
-                configuration, _ = _decode_daylight_configuration_at(
-                    parameters,
-                    offset=6,
-                    allowed_trailing_lengths=(0,),
-                )
-                candidates.append(
-                    DaylightStatus(
-                        request_opcode=request_opcode,
-                        status_opcode=status_opcode,
-                        raw_pdu=data,
-                        configuration=configuration,
-                        parser_layout="combined-live-prefix-v1",
-                        lamp_time_ms=live.lamp_time_ms,
-                        live_brightness_raw=live.brightness_raw,
-                    )
-                )
-            except ValueError as exc:
-                errors.append(f"live-prefix candidate: {exc}")
-
+        # Hardware capture on SANlight EVO firmware 4 confirms that 0x0F uses
+        # a seven-byte prefix: the existing six-byte live status followed by
+        # the current MaxBrightness byte, then the same configuration object
+        # returned by 0x04. Unknown variants remain raw-only and trigger the
+        # existing safe fallback to 0x03.
         try:
-            configuration, consumed = _decode_daylight_configuration_at(
-                parameters,
-                offset=0,
-                allowed_trailing_lengths=(6,),
-            )
-            live = decode_uptime_brightness_status_parameters(parameters[consumed:])
-            candidates.append(
-                DaylightStatus(
-                    request_opcode=request_opcode,
-                    status_opcode=status_opcode,
-                    raw_pdu=data,
-                    configuration=configuration,
-                    parser_layout="combined-live-suffix-v1",
-                    lamp_time_ms=live.lamp_time_ms,
-                    live_brightness_raw=live.brightness_raw,
+            if len(parameters) < 7:
+                raise ValueError(
+                    "combined daylight payload is too short for live status and "
+                    "MaxBrightness"
                 )
-            )
-        except ValueError as exc:
-            errors.append(f"live-suffix candidate: {exc}")
-
-        try:
+            live = decode_uptime_brightness_status_parameters(parameters[:6])
+            max_brightness = validate_reported_max_brightness(parameters[6])
             configuration, _ = _decode_daylight_configuration_at(
                 parameters,
-                offset=0,
+                offset=7,
                 allowed_trailing_lengths=(0,),
             )
-            candidates.append(
-                DaylightStatus(
-                    request_opcode=request_opcode,
-                    status_opcode=status_opcode,
-                    raw_pdu=data,
-                    configuration=configuration,
-                    parser_layout="combined-configuration-only-v1",
-                )
+            return DaylightStatus(
+                request_opcode=request_opcode,
+                status_opcode=status_opcode,
+                raw_pdu=data,
+                configuration=configuration,
+                parser_layout="combined-live-max-prefix-v1",
+                lamp_time_ms=live.lamp_time_ms,
+                live_brightness_raw=live.brightness_raw,
+                max_brightness=max_brightness,
             )
         except ValueError as exc:
-            errors.append(f"configuration-only candidate: {exc}")
-
-        if len(candidates) == 1:
-            return candidates[0]
-        if len(candidates) > 1:
-            layouts = ", ".join(
-                candidate.parser_layout or "unknown" for candidate in candidates
-            )
-            errors.append(
-                "combined daylight payload is ambiguous between validated "
-                f"layouts: {layouts}"
-            )
+            errors.append(str(exc))
 
     return DaylightStatus(
         request_opcode=request_opcode,

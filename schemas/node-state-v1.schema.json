@@ -192,7 +192,8 @@
             "lampTimeMs",
             "lampClock",
             "liveBrightnessRaw",
-            "liveBrightnessPercentEstimate"
+            "liveBrightnessPercentEstimate",
+            "maxBrightness"
           ],
           "properties": {
             "lampTimeMs": {
@@ -212,6 +213,11 @@
               "type": "number",
               "minimum": 0,
               "maximum": 6553.5
+            },
+            "maxBrightness": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
             }
           }
         }
@@ -323,7 +329,8 @@
             "lampTimeMs",
             "lampClock",
             "liveBrightnessRaw",
-            "liveBrightnessPercentEstimate"
+            "liveBrightnessPercentEstimate",
+            "maxBrightness"
           ],
           "properties": {
             "lampTimeMs": {
@@ -343,6 +350,11 @@
               "type": "number",
               "minimum": 0,
               "maximum": 6553.5
+            },
+            "maxBrightness": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
             }
           }
         },
