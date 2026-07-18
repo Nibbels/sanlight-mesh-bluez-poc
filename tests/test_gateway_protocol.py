@@ -63,6 +63,30 @@ class GatewayProtocolTest(unittest.TestCase):
         command = self.command(target="00a3")
         self.assertEqual(command.target, "00A3")
 
+    def test_read_daylight_is_read_only_and_accepts_one_or_all(self):
+        one = self.command(action="read-daylight", target="0002", value=None)
+        all_nodes = self.command(action="read-daylight", target="all", value=None)
+        default_all = self.command(action="read-daylight", target=None, value=None)
+        self.assertFalse(one.is_write)
+        self.assertEqual(one.target, "0002")
+        self.assertEqual(all_nodes.target, "all")
+        self.assertEqual(default_all.target, "all")
+
+    def test_read_daylight_rejects_write_fields(self):
+        for field in (
+            {"value": 20},
+            {"confirmed": False},
+            {"secondsSinceMidnight": 0},
+        ):
+            with self.subTest(field=field), self.assertRaises(GatewayProtocolError):
+                overrides = {
+                    "action": "read-daylight",
+                    "target": "0002",
+                    "value": None,
+                }
+                overrides.update(field)
+                self.command(**overrides)
+
 
     def test_unknown_fields_are_rejected(self):
         with self.assertRaises(GatewayProtocolError):

@@ -158,5 +158,10 @@ from the sender's 24-bit Sequence Number space. The gateway therefore:
 Do not connect a per-second sensor loop or an un-debounced slider directly to
 MaxBrightness commands.
 
+Daylight configuration reads are also explicit and serialized. They are not
+included in startup or periodic refresh because one read can require a fallback
+request and a larger segmented Mesh response. The gateway preserves raw vendor
+data and leaves schedule interpretation and farm policy to its MQTT clients.
+
 For the wire contract, see [MQTT_API.md](MQTT_API.md). For ioBroker setup, see
 [IOBROKER_INTEGRATION.md](IOBROKER_INTEGRATION.md).

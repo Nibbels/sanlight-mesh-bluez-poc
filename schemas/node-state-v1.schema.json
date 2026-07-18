@@ -68,6 +68,300 @@
     "liveVerifiedAt": {
       "type": "string",
       "format": "date-time"
+    },
+    "daylightConfiguration": {
+      "$ref": "#/$defs/daylightState"
+    }
+  },
+  "$defs": {
+    "daylightValue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timeInMinutes",
+        "time",
+        "brightness"
+      ],
+      "properties": {
+        "timeInMinutes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1440
+        },
+        "time": {
+          "type": "string",
+          "pattern": "^(?:(?:[01][0-9]|2[0-3]):[0-5][0-9]|24:00)$"
+        },
+        "brightness": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        }
+      }
+    },
+    "daylightData": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "requestOpcode",
+        "requestOpcodeHex",
+        "statusOpcode",
+        "statusOpcodeHex",
+        "rawPduHex",
+        "rawParametersHex",
+        "parsed"
+      ],
+      "properties": {
+        "requestOpcode": {
+          "enum": [
+            3,
+            14
+          ]
+        },
+        "requestOpcodeHex": {
+          "enum": [
+            "0x03",
+            "0x0E"
+          ]
+        },
+        "statusOpcode": {
+          "enum": [
+            4,
+            15
+          ]
+        },
+        "statusOpcodeHex": {
+          "enum": [
+            "0x04",
+            "0x0F"
+          ]
+        },
+        "rawPduHex": {
+          "type": "string",
+          "pattern": "^[0-9a-f]+$"
+        },
+        "rawParametersHex": {
+          "type": "string",
+          "pattern": "^[0-9a-f]*$"
+        },
+        "parsed": {
+          "type": "boolean"
+        },
+        "parserLayout": {
+          "type": "string"
+        },
+        "parseError": {
+          "type": "string"
+        },
+        "configuration": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "name",
+            "valueCount",
+            "values"
+          ],
+          "properties": {
+            "id": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "name": {
+              "type": "string"
+            },
+            "valueCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 96
+            },
+            "values": {
+              "type": "array",
+              "maxItems": 96,
+              "items": {
+                "$ref": "#/$defs/daylightValue"
+              }
+            }
+          }
+        },
+        "combinedStatus": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "lampTimeMs",
+            "lampClock",
+            "liveBrightnessRaw",
+            "liveBrightnessPercentEstimate"
+          ],
+          "properties": {
+            "lampTimeMs": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "lampClock": {
+              "type": "string"
+            },
+            "liveBrightnessRaw": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "liveBrightnessPercentEstimate": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 6553.5
+            }
+          }
+        }
+      }
+    },
+    "daylightState": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "verified",
+        "lastReadAt",
+        "lastReadOk"
+      ],
+      "properties": {
+        "verified": {
+          "type": "boolean"
+        },
+        "verifiedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "lastReadAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "lastReadOk": {
+          "type": "boolean"
+        },
+        "lastError": {
+          "type": "string"
+        },
+        "requestOpcode": {
+          "enum": [
+            3,
+            14
+          ]
+        },
+        "requestOpcodeHex": {
+          "enum": [
+            "0x03",
+            "0x0E"
+          ]
+        },
+        "statusOpcode": {
+          "enum": [
+            4,
+            15
+          ]
+        },
+        "statusOpcodeHex": {
+          "enum": [
+            "0x04",
+            "0x0F"
+          ]
+        },
+        "rawPduHex": {
+          "type": "string",
+          "pattern": "^[0-9a-f]+$"
+        },
+        "rawParametersHex": {
+          "type": "string",
+          "pattern": "^[0-9a-f]*$"
+        },
+        "parsed": {
+          "type": "boolean"
+        },
+        "parserLayout": {
+          "type": "string"
+        },
+        "parseError": {
+          "type": "string"
+        },
+        "configuration": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "name",
+            "valueCount",
+            "values"
+          ],
+          "properties": {
+            "id": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "name": {
+              "type": "string"
+            },
+            "valueCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 96
+            },
+            "values": {
+              "type": "array",
+              "maxItems": 96,
+              "items": {
+                "$ref": "#/$defs/daylightValue"
+              }
+            }
+          }
+        },
+        "combinedStatus": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "lampTimeMs",
+            "lampClock",
+            "liveBrightnessRaw",
+            "liveBrightnessPercentEstimate"
+          ],
+          "properties": {
+            "lampTimeMs": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            },
+            "lampClock": {
+              "type": "string"
+            },
+            "liveBrightnessRaw": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "liveBrightnessPercentEstimate": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 6553.5
+            }
+          }
+        },
+        "lastObservation": {
+          "$ref": "#/$defs/daylightData"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "rawPduHex"
+            ]
+          },
+          "then": {
+            "$ref": "#/$defs/daylightData"
+          }
+        }
+      ]
     }
   },
   "allOf": [

@@ -127,6 +127,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     get_max.add_argument("destination", type=parse_destination)
 
+    get_daylight = commands.add_parser(
+        "get-daylight",
+        help=(
+            "read the daylight configuration stored in one unicast node; "
+            "tries combined data first and falls back to the configuration-only query"
+        ),
+    )
+    get_daylight.add_argument("destination", type=parse_destination)
+
     get_net_tx = commands.add_parser(
         "get-net-tx", help="read Config Network Transmit via control identity"
     )
@@ -281,6 +290,7 @@ def validate_args(args: argparse.Namespace, control: MeshMaterial) -> None:
     if args.command in (
         "get-live",
         "get-max",
+        "get-daylight",
         "get-net-tx",
         "get-net-tx-sender",
     ):

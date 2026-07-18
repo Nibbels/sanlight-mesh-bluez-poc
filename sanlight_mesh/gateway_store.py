@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .gateway_protocol import isoformat_utc, parse_timestamp, utc_now
-from .protocol import LiveStatus
+from .protocol import DaylightStatus, LiveStatus, decode_daylight_status_pdu
 from .state import read_state, write_state
 
 
@@ -20,6 +20,12 @@ class CachedNodeState:
     verified_at: datetime
     live_status: LiveStatus | None = None
     live_verified_at: datetime | None = None
+    daylight_status: DaylightStatus | None = None
+    daylight_verified_at: datetime | None = None
+    daylight_last_observation: DaylightStatus | None = None
+    daylight_last_read_at: datetime | None = None
+    daylight_last_read_ok: bool | None = None
+    daylight_last_error: str | None = None
 
 
 class GatewayStore:
@@ -189,6 +195,86 @@ class GatewayStore:
             self.nodes[address] = record
             self.save()
 
+    @staticmethod
+    def _decode_stored_daylight(
+        record: Mapping[str, Any],
+        *,
+        request_key: str,
+        raw_key: str,
+    ) -> DaylightStatus | None:
+        request_opcode = record.get(request_key)
+        raw_pdu_hex = record.get(raw_key)
+        if (
+            isinstance(request_opcode, bool)
+            or not isinstance(request_opcode, int)
+            or not isinstance(raw_pdu_hex, str)
+        ):
+            return None
+        try:
+            raw_pdu = bytes.fromhex(raw_pdu_hex)
+            return decode_daylight_status_pdu(
+                raw_pdu,
+                request_opcode=request_opcode,
+            )
+        except ValueError:
+            return None
+
+    def update_daylight(
+        self,
+        address: str,
+        status: DaylightStatus,
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        current = now or utc_now()
+        existing = self.nodes.get(address)
+        record = dict(existing) if isinstance(existing, dict) else {}
+        record.update(
+            {
+                "daylightLastReadAt": isoformat_utc(current),
+                "daylightLastReadOk": status.parsed,
+                "daylightObservationRequestOpcode": status.request_opcode,
+                "daylightObservationRawPduHex": status.raw_pdu.hex(),
+            }
+        )
+        if status.parsed:
+            record.update(
+                {
+                    "daylightVerifiedAt": isoformat_utc(current),
+                    "daylightVerifiedRequestOpcode": status.request_opcode,
+                    "daylightVerifiedRawPduHex": status.raw_pdu.hex(),
+                }
+            )
+            record.pop("daylightLastError", None)
+        else:
+            record["daylightLastError"] = (
+                status.parse_error or "daylight response could not be parsed"
+            )[:1000]
+        self.nodes[address] = record
+        self.save()
+
+    def record_daylight_failure(
+        self,
+        address: str,
+        error: str,
+        *,
+        now: datetime | None = None,
+    ) -> None:
+        current = now or utc_now()
+        existing = self.nodes.get(address)
+        record = dict(existing) if isinstance(existing, dict) else {}
+        record.update(
+            {
+                "daylightLastReadAt": isoformat_utc(current),
+                "daylightLastReadOk": False,
+                "daylightLastError": str(error)[:1000],
+            }
+        )
+        record.pop("daylightObservationRequestOpcode", None)
+        record.pop("daylightObservationRawPduHex", None)
+        self.nodes[address] = record
+        self.save()
+
     def get_node(self, address: str) -> CachedNodeState | None:
         record = self.nodes.get(address)
         if not isinstance(record, dict):
@@ -222,11 +308,52 @@ class GatewayStore:
             if live_verified_at is not None:
                 live_status = LiveStatus(lamp_time_ms, brightness_raw)
 
+        daylight_status = self._decode_stored_daylight(
+            record,
+            request_key="daylightVerifiedRequestOpcode",
+            raw_key="daylightVerifiedRawPduHex",
+        )
+        daylight_verified_at: datetime | None = None
+        if daylight_status is not None and daylight_status.parsed:
+            try:
+                daylight_verified_at = parse_timestamp(
+                    record.get("daylightVerifiedAt"), "daylightVerifiedAt"
+                )
+            except Exception:
+                daylight_verified_at = None
+        if daylight_verified_at is None:
+            daylight_status = None
+
+        daylight_last_observation = self._decode_stored_daylight(
+            record,
+            request_key="daylightObservationRequestOpcode",
+            raw_key="daylightObservationRawPduHex",
+        )
+        daylight_last_read_at: datetime | None = None
+        try:
+            daylight_last_read_at = parse_timestamp(
+                record.get("daylightLastReadAt"), "daylightLastReadAt"
+            )
+        except Exception:
+            daylight_last_read_at = None
+        daylight_last_read_ok = record.get("daylightLastReadOk")
+        if not isinstance(daylight_last_read_ok, bool):
+            daylight_last_read_ok = None
+        daylight_last_error = record.get("daylightLastError")
+        if not isinstance(daylight_last_error, str):
+            daylight_last_error = None
+
         return CachedNodeState(
             value,
             verified_at,
             live_status=live_status,
             live_verified_at=live_verified_at,
+            daylight_status=daylight_status,
+            daylight_verified_at=daylight_verified_at,
+            daylight_last_observation=daylight_last_observation,
+            daylight_last_read_at=daylight_last_read_at,
+            daylight_last_read_ok=daylight_last_read_ok,
+            daylight_last_error=daylight_last_error,
         )
 
     def node_is_fresh(

@@ -10,6 +10,10 @@ from dataclasses import dataclass
 from .constants import (
     PRIMARY_APP_INDEX,
     SANLIGHT_COMPANY_ID,
+    SANLIGHT_GET_COMBINED_DAYLIGHT_DATA_OPCODE,
+    SANLIGHT_GET_COMBINED_DAYLIGHT_DATA_STATUS_OPCODE,
+    SANLIGHT_GET_DAYLIGHT_CONFIGURATION_OPCODE,
+    SANLIGHT_GET_DAYLIGHT_CONFIGURATION_STATUS_OPCODE,
     SANLIGHT_GET_MAX_BRIGHTNESS_OPCODE,
     SANLIGHT_GET_MAX_BRIGHTNESS_STATUS_OPCODE,
     SANLIGHT_GET_UPTIME_BRIGHTNESS_OPCODE,
@@ -20,6 +24,9 @@ from .constants import (
     SANLIGHT_SET_UPTIME_OPCODE,
     SANLIGHT_SET_UPTIME_STATUS_OPCODE,
 )
+
+
+MAX_DAYLIGHT_VALUES = 96
 
 
 def _vendor_opcode(opcode: int) -> bytes:
@@ -180,6 +187,369 @@ def get_uptime_brightness_status_parameters(data: bytes) -> bytes:
     if not is_get_uptime_brightness_status(data):
         raise ValueError("not a SANlight GetUptimeAndBrightness Status PDU")
     return data[3:]
+
+
+def build_get_daylight_configuration_pdu() -> bytes:
+    """Build the read-only GetDaylightConfiguration request (vendor opcode 0x03)."""
+
+    return _vendor_opcode(SANLIGHT_GET_DAYLIGHT_CONFIGURATION_OPCODE)
+
+
+def build_get_combined_daylight_data_pdu() -> bytes:
+    """Build the read-only GetCombinedDaylightData request (vendor opcode 0x0E)."""
+
+    return _vendor_opcode(SANLIGHT_GET_COMBINED_DAYLIGHT_DATA_OPCODE)
+
+
+def is_get_daylight_configuration_status(data: bytes) -> bool:
+    return len(data) >= 3 and data[:3] == _vendor_opcode(
+        SANLIGHT_GET_DAYLIGHT_CONFIGURATION_STATUS_OPCODE
+    )
+
+
+def is_get_combined_daylight_data_status(data: bytes) -> bool:
+    return len(data) >= 3 and data[:3] == _vendor_opcode(
+        SANLIGHT_GET_COMBINED_DAYLIGHT_DATA_STATUS_OPCODE
+    )
+
+
+def is_daylight_status(data: bytes) -> bool:
+    return is_get_daylight_configuration_status(
+        data
+    ) or is_get_combined_daylight_data_status(data)
+
+
+def _format_daylight_minute(value: int) -> str:
+    if value == 1_440:
+        return "24:00"
+    return f"{value // 60:02d}:{value % 60:02d}"
+
+
+@dataclass(frozen=True)
+class DaylightValue:
+    """One currently assumed SANlight daylight curve value.
+
+    The field widths are based on the protocol evidence available before the
+    first v0.4.0 hardware probe: uint16 little-endian minutes followed by one
+    uint8 brightness percentage. Raw status bytes remain available alongside
+    parsed values so this assumption can be corrected without losing evidence.
+    """
+
+    time_in_minutes: int
+    brightness: int
+
+    def __post_init__(self) -> None:
+        if isinstance(self.time_in_minutes, bool) or not isinstance(
+            self.time_in_minutes, int
+        ):
+            raise ValueError("daylight time must be an integer")
+        if not 0 <= self.time_in_minutes <= 1_440:
+            raise ValueError("daylight time must be between 0 and 1440 minutes")
+        if isinstance(self.brightness, bool) or not isinstance(self.brightness, int):
+            raise ValueError("daylight brightness must be an integer")
+        if not 0 <= self.brightness <= 100:
+            raise ValueError("daylight brightness must be between 0 and 100")
+
+    def to_document(self) -> dict[str, object]:
+        return {
+            "timeInMinutes": self.time_in_minutes,
+            "time": _format_daylight_minute(self.time_in_minutes),
+            "brightness": self.brightness,
+        }
+
+
+@dataclass(frozen=True)
+class DaylightConfiguration:
+    configuration_id: int
+    name: str
+    values: tuple[DaylightValue, ...]
+
+    def __post_init__(self) -> None:
+        if isinstance(self.configuration_id, bool) or not isinstance(
+            self.configuration_id, int
+        ):
+            raise ValueError("daylight configuration id must be an integer")
+        if not 0 <= self.configuration_id <= 0xFFFFFFFF:
+            raise ValueError("daylight configuration id must fit in uint32")
+        if not isinstance(self.name, str):
+            raise ValueError("daylight configuration name must be a string")
+        if len(self.values) > MAX_DAYLIGHT_VALUES:
+            raise ValueError(
+                f"daylight configuration exceeds {MAX_DAYLIGHT_VALUES} values"
+            )
+        previous = -1
+        for value in self.values:
+            if value.time_in_minutes < previous:
+                raise ValueError("daylight values must be ordered by time")
+            previous = value.time_in_minutes
+
+    def to_document(self) -> dict[str, object]:
+        return {
+            "id": self.configuration_id,
+            "name": self.name,
+            "valueCount": len(self.values),
+            "values": [value.to_document() for value in self.values],
+        }
+
+
+@dataclass(frozen=True)
+class DaylightStatus:
+    """A raw and, when possible, parsed daylight status response."""
+
+    request_opcode: int
+    status_opcode: int
+    raw_pdu: bytes
+    configuration: DaylightConfiguration | None = None
+    parser_layout: str | None = None
+    lamp_time_ms: int | None = None
+    live_brightness_raw: int | None = None
+    parse_error: str | None = None
+
+    @property
+    def parsed(self) -> bool:
+        return self.configuration is not None
+
+    def to_document(self) -> dict[str, object]:
+        document: dict[str, object] = {
+            "requestOpcode": self.request_opcode,
+            "requestOpcodeHex": f"0x{self.request_opcode:02X}",
+            "statusOpcode": self.status_opcode,
+            "statusOpcodeHex": f"0x{self.status_opcode:02X}",
+            "rawPduHex": self.raw_pdu.hex(),
+            "rawParametersHex": self.raw_pdu[3:].hex(),
+            "parsed": self.parsed,
+        }
+        if self.parser_layout is not None:
+            document["parserLayout"] = self.parser_layout
+        if self.configuration is not None:
+            document["configuration"] = self.configuration.to_document()
+        if self.lamp_time_ms is not None and self.live_brightness_raw is not None:
+            live = LiveStatus(self.lamp_time_ms, self.live_brightness_raw)
+            document["combinedStatus"] = {
+                "lampTimeMs": live.lamp_time_ms,
+                "lampClock": live.lamp_clock,
+                "liveBrightnessRaw": live.brightness_raw,
+                "liveBrightnessPercentEstimate": live.brightness_percent_estimate,
+            }
+        if self.parse_error is not None:
+            document["parseError"] = self.parse_error
+        return document
+
+
+def _decode_daylight_configuration_at(
+    parameters: bytes,
+    *,
+    offset: int,
+    allowed_trailing_lengths: tuple[int, ...],
+) -> tuple[DaylightConfiguration, int]:
+    """Decode the currently evidenced daylight layout at ``offset``.
+
+    Working wire hypothesis:
+
+    - uint32 little-endian configuration id
+    - uint8 value count
+    - repeated uint16 little-endian minute + uint8 brightness
+    - UTF-8 profile name terminated by NUL
+
+    The caller controls which exact trailing lengths are accepted. Unknown
+    layouts are intentionally rejected and retained as raw data by the public
+    decoder instead of being guessed into a false configuration.
+    """
+
+    if offset < 0 or offset > len(parameters):
+        raise ValueError("invalid daylight payload offset")
+    available = len(parameters) - offset
+    if available < 6:
+        raise ValueError("daylight payload is too short for id, count and name")
+
+    configuration_id = int.from_bytes(parameters[offset : offset + 4], "little")
+    count = parameters[offset + 4]
+    if count > MAX_DAYLIGHT_VALUES:
+        raise ValueError(
+            f"daylight value count {count} exceeds {MAX_DAYLIGHT_VALUES}"
+        )
+
+    values_start = offset + 5
+    values_end = values_start + count * 3
+    if values_end >= len(parameters):
+        raise ValueError("daylight payload is truncated before the profile name")
+
+    values: list[DaylightValue] = []
+    previous = -1
+    for index in range(count):
+        item_offset = values_start + index * 3
+        minute = int.from_bytes(parameters[item_offset : item_offset + 2], "little")
+        brightness = parameters[item_offset + 2]
+        value = DaylightValue(minute, brightness)
+        if value.time_in_minutes < previous:
+            raise ValueError("daylight values are not ordered by time")
+        previous = value.time_in_minutes
+        values.append(value)
+
+    name_end = parameters.find(b"\x00", values_end)
+    if name_end < 0:
+        raise ValueError("daylight profile name is not NUL-terminated")
+    try:
+        name = parameters[values_end:name_end].decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("daylight profile name is not valid UTF-8") from exc
+    if any(ord(character) < 0x20 for character in name):
+        raise ValueError("daylight profile name contains a control character")
+
+    consumed = name_end + 1
+    trailing_length = len(parameters) - consumed
+    if trailing_length not in allowed_trailing_lengths:
+        expected = ", ".join(str(value) for value in allowed_trailing_lengths)
+        raise ValueError(
+            "daylight payload has an unsupported trailing length "
+            f"of {trailing_length} bytes; expected {expected}"
+        )
+
+    return DaylightConfiguration(configuration_id, name, tuple(values)), consumed
+
+
+def decode_daylight_status_pdu(
+    data: bytes,
+    *,
+    request_opcode: int,
+) -> DaylightStatus:
+    """Decode 0x04 or 0x0F while retaining authoritative raw bytes.
+
+    Parsing failure is represented in the returned object instead of raising.
+    A wrong opcode or impossible request opcode remains a programming error and
+    raises ``ValueError``.
+    """
+
+    if request_opcode not in (
+        SANLIGHT_GET_DAYLIGHT_CONFIGURATION_OPCODE,
+        SANLIGHT_GET_COMBINED_DAYLIGHT_DATA_OPCODE,
+    ):
+        raise ValueError("unsupported daylight request opcode")
+    if is_get_daylight_configuration_status(data):
+        status_opcode = SANLIGHT_GET_DAYLIGHT_CONFIGURATION_STATUS_OPCODE
+    elif is_get_combined_daylight_data_status(data):
+        status_opcode = SANLIGHT_GET_COMBINED_DAYLIGHT_DATA_STATUS_OPCODE
+    else:
+        raise ValueError("not a SANlight daylight status PDU")
+
+    expected_status_opcode = {
+        SANLIGHT_GET_DAYLIGHT_CONFIGURATION_OPCODE: (
+            SANLIGHT_GET_DAYLIGHT_CONFIGURATION_STATUS_OPCODE
+        ),
+        SANLIGHT_GET_COMBINED_DAYLIGHT_DATA_OPCODE: (
+            SANLIGHT_GET_COMBINED_DAYLIGHT_DATA_STATUS_OPCODE
+        ),
+    }[request_opcode]
+    if status_opcode != expected_status_opcode:
+        raise ValueError(
+            "daylight status opcode does not match the active request "
+            f"(request=0x{request_opcode:02X}, status=0x{status_opcode:02X})"
+        )
+
+    parameters = data[3:]
+    errors: list[str] = []
+
+    if status_opcode == SANLIGHT_GET_DAYLIGHT_CONFIGURATION_STATUS_OPCODE:
+        try:
+            configuration, _ = _decode_daylight_configuration_at(
+                parameters,
+                offset=0,
+                allowed_trailing_lengths=(0,),
+            )
+            return DaylightStatus(
+                request_opcode=request_opcode,
+                status_opcode=status_opcode,
+                raw_pdu=data,
+                configuration=configuration,
+                parser_layout="configuration-v1",
+            )
+        except ValueError as exc:
+            errors.append(str(exc))
+    else:
+        # The APK's CombinedDaylightData tests compare time, current brightness,
+        # configuration id and values. Try the currently evidenced exact layouts
+        # independently and reject ambiguity instead of selecting a plausible but
+        # potentially wrong interpretation.
+        candidates: list[DaylightStatus] = []
+
+        if len(parameters) >= 6:
+            try:
+                live = decode_uptime_brightness_status_parameters(parameters[:6])
+                configuration, _ = _decode_daylight_configuration_at(
+                    parameters,
+                    offset=6,
+                    allowed_trailing_lengths=(0,),
+                )
+                candidates.append(
+                    DaylightStatus(
+                        request_opcode=request_opcode,
+                        status_opcode=status_opcode,
+                        raw_pdu=data,
+                        configuration=configuration,
+                        parser_layout="combined-live-prefix-v1",
+                        lamp_time_ms=live.lamp_time_ms,
+                        live_brightness_raw=live.brightness_raw,
+                    )
+                )
+            except ValueError as exc:
+                errors.append(f"live-prefix candidate: {exc}")
+
+        try:
+            configuration, consumed = _decode_daylight_configuration_at(
+                parameters,
+                offset=0,
+                allowed_trailing_lengths=(6,),
+            )
+            live = decode_uptime_brightness_status_parameters(parameters[consumed:])
+            candidates.append(
+                DaylightStatus(
+                    request_opcode=request_opcode,
+                    status_opcode=status_opcode,
+                    raw_pdu=data,
+                    configuration=configuration,
+                    parser_layout="combined-live-suffix-v1",
+                    lamp_time_ms=live.lamp_time_ms,
+                    live_brightness_raw=live.brightness_raw,
+                )
+            )
+        except ValueError as exc:
+            errors.append(f"live-suffix candidate: {exc}")
+
+        try:
+            configuration, _ = _decode_daylight_configuration_at(
+                parameters,
+                offset=0,
+                allowed_trailing_lengths=(0,),
+            )
+            candidates.append(
+                DaylightStatus(
+                    request_opcode=request_opcode,
+                    status_opcode=status_opcode,
+                    raw_pdu=data,
+                    configuration=configuration,
+                    parser_layout="combined-configuration-only-v1",
+                )
+            )
+        except ValueError as exc:
+            errors.append(f"configuration-only candidate: {exc}")
+
+        if len(candidates) == 1:
+            return candidates[0]
+        if len(candidates) > 1:
+            layouts = ", ".join(
+                candidate.parser_layout or "unknown" for candidate in candidates
+            )
+            errors.append(
+                "combined daylight payload is ambiguous between validated "
+                f"layouts: {layouts}"
+            )
+
+    return DaylightStatus(
+        request_opcode=request_opcode,
+        status_opcode=status_opcode,
+        raw_pdu=data,
+        parse_error="; ".join(errors),
+    )
 
 
 def validate_uptime_milliseconds(milliseconds: int) -> int:

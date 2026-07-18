@@ -5,17 +5,36 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
+from sanlight_mesh.constants import SANLIGHT_GET_DAYLIGHT_CONFIGURATION_OPCODE
 from sanlight_mesh.gateway_config import GatewayConfig, MqttConfig
 from sanlight_mesh.gateway_executor import ExecutionResult
 from sanlight_mesh.gateway_protocol import isoformat_utc
 from sanlight_mesh.gateway_service import SanlightMqttGateway
 from sanlight_mesh.mqtt_transport import IncomingMessage
+from sanlight_mesh.protocol import decode_daylight_status_pdu
 from sanlight_mesh.state import write_state
 from sanlight_mesh.cdb import load_mesh_material
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "sample_cdb.json"
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def daylight_status(configuration_id=7):
+    values = ((0, 0), (360, 20), (1080, 0))
+    parameters = (
+        configuration_id.to_bytes(4, "little")
+        + bytes((len(values),))
+        + b"".join(
+            minute.to_bytes(2, "little") + bytes((brightness,))
+            for minute, brightness in values
+        )
+        + b"Flower 12/12\x00"
+    )
+    return decode_daylight_status_pdu(
+        bytes.fromhex("c48b0a") + parameters,
+        request_opcode=SANLIGHT_GET_DAYLIGHT_CONFIGURATION_OPCODE,
+    )
 
 
 class FakeTransport:
@@ -40,6 +59,18 @@ class FakeExecutor:
 
     def execute(self, command):
         self.commands.append(command)
+        if command.action == "read-daylight":
+            addresses = ("0002", "0003") if command.target == "all" else (command.target,)
+            return ExecutionResult(
+                ok=True,
+                status="verified",
+                message="daylight verified",
+                reported={},
+                daylight_reported={
+                    address: daylight_status(int(address, 16)) for address in addresses
+                },
+                details={},
+            )
         value = command.value if command.value is not None else 68
         return ExecutionResult(
             ok=True,
@@ -196,5 +227,44 @@ class GatewayServiceTest(unittest.TestCase):
                     if topic.endswith("/result/cmd-1")
                 ]
                 self.assertTrue(duplicate_results[-1]["details"]["duplicateDelivery"])
+            finally:
+                gateway.stop()
+
+    def test_read_daylight_publishes_raw_and_parsed_configuration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            gateway, transport = self.make_gateway(tmp)
+            try:
+                # Node state v1 is anchored by a verified MaxBrightness value.
+                gateway.store.update_node("0003", 68)
+                now = datetime.now(timezone.utc)
+                payload = json.dumps(
+                    {
+                        "id": "daylight-1",
+                        "action": "read-daylight",
+                        "target": "0003",
+                        "createdAt": isoformat_utc(now),
+                        "ttlSeconds": 30,
+                    }
+                ).encode()
+                gateway.on_message(
+                    IncomingMessage(gateway.config.command_topic, payload, 1, False)
+                )
+                result = self.wait_for_result(transport, "daylight-1")
+                self.assertTrue(result["ok"])
+                reported = result["details"]["daylightReported"]["0003"]
+                self.assertTrue(reported["parsed"])
+                self.assertEqual(reported["configuration"]["name"], "Flower 12/12")
+                self.assertTrue(reported["rawPduHex"].startswith("c48b0a"))
+
+                state_messages = [
+                    message
+                    for topic, message, retained in transport.json_messages
+                    if topic.endswith("/nodes/0003/state") and retained
+                ]
+                daylight = state_messages[-1]["daylightConfiguration"]
+                self.assertTrue(daylight["verified"])
+                self.assertTrue(daylight["lastReadOk"])
+                self.assertEqual(daylight["configuration"]["id"], 3)
+                self.assertTrue(daylight["rawPduHex"].startswith("c48b0a"))
             finally:
                 gateway.stop()

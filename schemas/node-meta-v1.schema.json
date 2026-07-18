@@ -43,6 +43,15 @@
         }
       }
     },
+    "readable": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "daylightConfiguration": {
+          "type": "boolean"
+        }
+      }
+    },
     "supportsExplicitBlackout": {
       "type": "boolean"
     }

@@ -6,6 +6,7 @@ D-Bus packages are installed.
 from __future__ import annotations
 
 import argparse
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -19,14 +20,21 @@ from .cdb import MeshMaterial, load_cdb_node_device_key, safe_summary, validate_
 from .constants import (
     PRIMARY_APP_INDEX,
     SANLIGHT_COMPANY_ID,
+    SANLIGHT_GET_COMBINED_DAYLIGHT_DATA_OPCODE,
+    SANLIGHT_GET_COMBINED_DAYLIGHT_DATA_STATUS_OPCODE,
+    SANLIGHT_GET_DAYLIGHT_CONFIGURATION_OPCODE,
+    SANLIGHT_GET_DAYLIGHT_CONFIGURATION_STATUS_OPCODE,
     SANLIGHT_MODEL_ID,
     TARGET_DEFAULT_TTL,
 )
 from .protocol import (
+    DaylightStatus,
     LiveStatus,
     build_config_default_ttl_set_pdu,
     build_config_network_transmit_get_pdu,
     build_get_max_brightness_pdu,
+    build_get_combined_daylight_data_pdu,
+    build_get_daylight_configuration_pdu,
     build_get_uptime_brightness_pdu,
     build_blackout_pdu,
     build_set_max_brightness_pdu,
@@ -34,6 +42,7 @@ from .protocol import (
     build_vendor_model_app_bind_pdu,
     config_default_ttl_status_value,
     decode_config_network_transmit_status,
+    decode_daylight_status_pdu,
     decode_uptime_brightness_status_parameters,
     format_milliseconds_as_clock,
     get_max_brightness_status_value,
@@ -41,6 +50,9 @@ from .protocol import (
     is_config_default_ttl_status,
     is_config_network_transmit_status,
     is_get_max_brightness_status,
+    is_daylight_status,
+    is_get_combined_daylight_data_status,
+    is_get_daylight_configuration_status,
     is_get_uptime_brightness_status,
     is_set_max_brightness_status,
     is_set_uptime_status,
@@ -402,6 +414,54 @@ class SenderElement(dbus.service.Object):
             self.runtime.on_get_max_status(source_int, value)
             return
 
+        if is_daylight_status(payload):
+            if self.runtime.args.command != "get-daylight":
+                print(
+                    "Ignoring SANlight daylight status because no get-daylight "
+                    "transaction is active."
+                )
+                return
+            try:
+                response_destination = int(destination)
+            except (TypeError, ValueError):
+                response_destination = None
+            reason = unicast_status_rejection_reason(
+                source=source_int,
+                key_index=int(key_index),
+                response_destination=response_destination,
+                requested_destination=self.runtime.args.destination,
+                expected_app_index=self.runtime.control.app_index,
+                sender_unicast=self.runtime.sender_unicast,
+                node_addresses=self.runtime.control.sanlight_nodes,
+            )
+            if reason is not None:
+                print(f"Ignoring unrelated SANlight daylight status: {reason}.")
+                return
+            expected_status = {
+                SANLIGHT_GET_COMBINED_DAYLIGHT_DATA_OPCODE: (
+                    is_get_combined_daylight_data_status,
+                    SANLIGHT_GET_COMBINED_DAYLIGHT_DATA_STATUS_OPCODE,
+                ),
+                SANLIGHT_GET_DAYLIGHT_CONFIGURATION_OPCODE: (
+                    is_get_daylight_configuration_status,
+                    SANLIGHT_GET_DAYLIGHT_CONFIGURATION_STATUS_OPCODE,
+                ),
+            }.get(self.runtime.daylight_request_opcode)
+            if expected_status is None or not expected_status[0](payload):
+                expected_text = (
+                    "unknown"
+                    if expected_status is None
+                    else f"0x{expected_status[1]:02X}"
+                )
+                print(
+                    "Ignoring delayed SANlight daylight status that does not "
+                    f"match the active request; expected {expected_text}, "
+                    f"raw={payload.hex()}."
+                )
+                return
+            self.runtime.on_daylight_status(source_int, payload)
+            return
+
         if is_set_uptime_status(payload):
             params = set_uptime_status_parameters(payload)
             detail = f"src=0x{source_int:04X} parameters={params.hex()}"
@@ -547,6 +607,10 @@ class BluezRuntime:
         self.live_status: tuple[int, LiveStatus] | None = None
         self.live_attempt = 0
         self.live_max_attempts = 2
+        self.daylight_generation = 0
+        self.daylight_request_opcode = SANLIGHT_GET_COMBINED_DAYLIGHT_DATA_OPCODE
+        self.daylight_status: tuple[int, DaylightStatus] | None = None
+        self.daylight_fallback_reason: str | None = None
         self.uptime_targets: set[int] = set()
         self.uptime_status_seen: set[int] = set()
 
@@ -610,6 +674,7 @@ class BluezRuntime:
             elif self.args.command in (
                 "get-live",
                 "get-max",
+                "get-daylight",
                 "get-net-tx-sender",
                 "show-sender-state",
                 "set-max",
@@ -1099,6 +1164,8 @@ class BluezRuntime:
             self.send_get_live()
         elif self.args.command == "get-max":
             self.start_get_max_readback()
+        elif self.args.command == "get-daylight":
+            self.start_get_daylight()
         elif self.args.command == "set-max":
             self.prepare_single_brightness_write(
                 self.args.destination, self.args.percent
@@ -1275,6 +1342,165 @@ class BluezRuntime:
             f"liveBrightnessRaw={status.brightness_raw} "
             f"liveBrightnessPercentEstimate="
             f"{status.brightness_percent_estimate:.1f}%."
+        )
+
+    def start_get_daylight(self) -> None:
+        """Start with 0x0E and fall back once to the narrower 0x03 query."""
+
+        self.daylight_status = None
+        self.daylight_fallback_reason = None
+        self.daylight_request_opcode = SANLIGHT_GET_COMBINED_DAYLIGHT_DATA_OPCODE
+        print(
+            "Starting read-only daylight query with GetCombinedDaylightData "
+            "(vendor opcode 0x0E)."
+        )
+        self.send_daylight_request()
+
+    def send_daylight_request(self) -> None:
+        if self.finished:
+            return
+        if self.sender_node is None:
+            self.fail("Canonical sender Node1 interface is unavailable")
+            return
+
+        self.daylight_generation += 1
+        generation = self.daylight_generation
+        opcode = self.daylight_request_opcode
+        if opcode == SANLIGHT_GET_COMBINED_DAYLIGHT_DATA_OPCODE:
+            payload = build_get_combined_daylight_data_pdu()
+            label = "GetCombinedDaylightData"
+        elif opcode == SANLIGHT_GET_DAYLIGHT_CONFIGURATION_OPCODE:
+            payload = build_get_daylight_configuration_pdu()
+            label = "GetDaylightConfiguration"
+        else:
+            self.fail(f"Unsupported daylight request opcode 0x{opcode:02X}")
+            return
+
+        destination = self.args.destination
+        description = validate_destination(self.control, destination)
+        print(
+            f"Sending read-only {label} to 0x{destination:04X} "
+            f"({description}); PDU={payload.hex()}"
+        )
+        self.sender_node.Send(
+            dbus.ObjectPath(SENDER_ELEMENT_PATH),
+            dbus.UInt16(destination),
+            dbus.UInt16(self.control.app_index),
+            empty_options(),
+            byte_array(payload),
+            reply_handler=lambda current_generation=generation, current_opcode=opcode: self.on_daylight_send_accepted(
+                current_generation, current_opcode
+            ),
+            error_handler=lambda error: self.fail(
+                f"Canonical sender Node1.Send {label} failed: {error}"
+            ),
+        )
+
+    def on_daylight_send_accepted(self, generation: int, opcode: int) -> None:
+        if self.finished or generation != self.daylight_generation:
+            return
+        print(
+            "Daylight read accepted for Mesh transmission "
+            f"(request opcode 0x{opcode:02X})."
+        )
+        self.timeout(
+            10,
+            lambda current_generation=generation, current_opcode=opcode: self.on_daylight_timeout(
+                current_generation, current_opcode
+            ),
+        )
+
+    def on_daylight_timeout(self, generation: int, opcode: int) -> None:
+        if self.finished or generation != self.daylight_generation:
+            return
+        if opcode == SANLIGHT_GET_COMBINED_DAYLIGHT_DATA_OPCODE:
+            self.start_daylight_configuration_fallback(
+                "no 0x0F CombinedDaylightData status was observed within 10 seconds"
+            )
+            return
+        if self.daylight_status is not None:
+            self.finish_get_daylight(self.daylight_status)
+            return
+        self.finish(
+            "GET-DAYLIGHT COMPLETE. No SANlight 0x0F or 0x04 daylight status "
+            "was observed after the combined and configuration-only queries.",
+            3,
+        )
+
+    def start_daylight_configuration_fallback(self, reason: str) -> None:
+        if self.finished:
+            return
+        self.daylight_fallback_reason = reason
+        self.daylight_request_opcode = SANLIGHT_GET_DAYLIGHT_CONFIGURATION_OPCODE
+        print(
+            f"Falling back to GetDaylightConfiguration (vendor opcode 0x03): {reason}."
+        )
+        self.send_daylight_request()
+
+    def on_daylight_status(self, source: int, payload: bytes) -> None:
+        if self.finished:
+            return
+        status = decode_daylight_status_pdu(
+            payload,
+            request_opcode=self.daylight_request_opcode,
+        )
+        self.daylight_status = (source, status)
+        parsed_text = "parsed" if status.parsed else "raw-only"
+        print(
+            "Received matching SANlight daylight status "
+            f"(vendor opcode 0x{status.status_opcode:02X}) from "
+            f"0x{source:04X}; result={parsed_text}; raw={payload.hex()}."
+        )
+
+        if status.parsed:
+            self.finish_get_daylight((source, status))
+            return
+
+        if (
+            self.daylight_request_opcode == SANLIGHT_GET_COMBINED_DAYLIGHT_DATA_OPCODE
+            and status.status_opcode
+            == SANLIGHT_GET_COMBINED_DAYLIGHT_DATA_STATUS_OPCODE
+        ):
+            self.start_daylight_configuration_fallback(
+                "the 0x0F response was received but did not match a validated parser layout"
+            )
+            return
+
+        self.finish_get_daylight((source, status))
+
+    def finish_get_daylight(
+        self,
+        observed: tuple[int, DaylightStatus],
+    ) -> None:
+        if self.finished:
+            return
+        source, status = observed
+        document = {
+            "address": f"{source:04X}",
+            "verified": status.parsed,
+            **status.to_document(),
+        }
+        if self.daylight_fallback_reason is not None:
+            document["fallbackUsed"] = True
+            document["fallbackReason"] = self.daylight_fallback_reason
+        else:
+            document["fallbackUsed"] = False
+        if status.configuration is not None:
+            print(
+                "Daylight configuration parsed: "
+                f"id={status.configuration.configuration_id} "
+                f"name={status.configuration.name!r} "
+                f"values={len(status.configuration.values)}."
+            )
+        else:
+            print(
+                "Daylight response retained as raw data because the current "
+                f"parser could not verify its layout: {status.parse_error}."
+            )
+        self.finish(
+            "GET-DAYLIGHT COMPLETE. "
+            + json.dumps(document, ensure_ascii=False, separators=(",", ":")),
+            0 if status.parsed else 3,
         )
 
     def resolve_clock_destinations(self) -> list[int]:

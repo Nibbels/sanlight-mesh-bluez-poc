@@ -7,6 +7,7 @@ No shell is involved and MQTT input never becomes an executable path or option.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -19,7 +20,7 @@ from typing import Iterable, Mapping
 
 from .gateway_config import GatewayConfig
 from .gateway_protocol import GatewayCommand
-from .protocol import LiveStatus
+from .protocol import DaylightStatus, LiveStatus, decode_daylight_status_pdu
 
 
 _GET_MAX_RE = re.compile(
@@ -31,6 +32,7 @@ _GET_LIVE_RE = re.compile(
     r"liveBrightnessRaw=(\d+) "
     r"liveBrightnessPercentEstimate=([0-9]+(?:\.[0-9]+)?)%\."
 )
+_GET_DAYLIGHT_RE = re.compile(r"^GET-DAYLIGHT COMPLETE\. (\{.*\})$", re.MULTILINE)
 _SEQUENCE_RE = re.compile(
     r"sequenceNumber=(\d+) \(0x[0-9A-Fa-f]+\).*?sequenceRemaining=(\d+)",
     re.DOTALL,
@@ -81,6 +83,7 @@ class ExecutionResult:
     reported: Mapping[str, int]
     details: Mapping[str, object]
     live_reported: Mapping[str, LiveStatus] = field(default_factory=dict)
+    daylight_reported: Mapping[str, DaylightStatus] = field(default_factory=dict)
 
 
 class GatewayExecutionError(RuntimeError):
@@ -163,6 +166,43 @@ class CliCommandExecutor:
         return address, status
 
     @staticmethod
+    def _parse_get_daylight(
+        result: ProcessResult,
+    ) -> tuple[str, DaylightStatus] | None:
+        matches = _GET_DAYLIGHT_RE.findall(result.stdout)
+        if not matches:
+            return None
+        try:
+            document = json.loads(matches[-1])
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(document, dict):
+            return None
+        address = document.get("address")
+        request_opcode = document.get("requestOpcode")
+        raw_pdu_hex = document.get("rawPduHex")
+        if (
+            not isinstance(address, str)
+            or re.fullmatch(r"[0-9A-F]{4}", address) is None
+            or isinstance(request_opcode, bool)
+            or not isinstance(request_opcode, int)
+            or not isinstance(raw_pdu_hex, str)
+            or len(raw_pdu_hex) % 2 != 0
+            or re.fullmatch(r"[0-9a-f]+", raw_pdu_hex) is None
+        ):
+            return None
+        try:
+            status = decode_daylight_status_pdu(
+                bytes.fromhex(raw_pdu_hex),
+                request_opcode=request_opcode,
+            )
+        except ValueError:
+            return None
+        if document.get("verified") is not status.parsed:
+            return None
+        return address, status
+
+    @staticmethod
     def _parse_reported_values(result: ProcessResult) -> dict[str, int]:
         reported: dict[str, int] = {}
         for pattern in (_STATUS_VALUE_RE, _NODE_VALUE_RE, _FINAL_VALUE_RE):
@@ -216,6 +256,57 @@ class CliCommandExecutor:
             ),
             reported=reported,
             live_reported=live_reported,
+            details={"errors": errors} if errors else {},
+        )
+
+    def read_daylight(self, target: str) -> ExecutionResult:
+        targets = self.node_addresses if target == "all" else (target,)
+        daylight_reported: dict[str, DaylightStatus] = {}
+        errors: dict[str, str] = {}
+        verified_count = 0
+
+        for address in targets:
+            process = self._run(
+                ["get-daylight", address],
+                timeout=max(self.config.command_timeout_seconds, 30),
+            )
+            parsed = self._parse_get_daylight(process)
+            if parsed is None or parsed[0] != address:
+                errors[address] = process.summary
+                continue
+            status = parsed[1]
+            daylight_reported[address] = status
+            if status.parsed:
+                verified_count += 1
+            else:
+                errors[address] = status.parse_error or "daylight response was raw-only"
+
+        total = len(targets)
+        ok = verified_count == total
+        if ok:
+            message = (
+                "Stored daylight configurations read and verified for all selected lamps."
+                if target == "all"
+                else "Stored daylight configuration read and verified."
+            )
+            status_text = "verified"
+        elif daylight_reported:
+            message = (
+                f"Daylight configuration verified for {verified_count} of {total} "
+                "selected lamps; raw responses were retained where available."
+            )
+            status_text = "partial"
+        else:
+            message = "No daylight configuration response could be read."
+            status_text = "failed"
+
+        return ExecutionResult(
+            ok=ok,
+            status=status_text,
+            message=message,
+            reported={},
+            live_reported={},
+            daylight_reported=daylight_reported,
             details={"errors": errors} if errors else {},
         )
 
@@ -332,6 +423,9 @@ class CliCommandExecutor:
 
         if command.action in {"sync-clock", "set-clock"}:
             return self._clock_write(command)
+
+        if command.action == "read-daylight":
+            return self.read_daylight(command.target)
 
         if command.action == "refresh":
             return self.refresh(command.target)

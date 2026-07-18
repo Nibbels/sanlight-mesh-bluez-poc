@@ -59,6 +59,18 @@ class CliTest(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("unicast", stderr)
 
+    def test_get_daylight_is_registered_and_unicast_only(self):
+        args = build_parser().parse_args(
+            ["--cdb", str(FIXTURE), "get-daylight", "0002"]
+        )
+        self.assertEqual(args.command, "get-daylight")
+        self.assertEqual(args.destination, 0x0002)
+
+        code, stdout, stderr = self.run_cli("get-daylight", "C000")
+        self.assertEqual(code, 2)
+        self.assertIn("unicast", stderr)
+        self.assertNotIn("D-Bus", stderr)
+
     def test_group_rejected_for_sender_network_probe(self):
         code, stdout, stderr = self.run_cli("get-net-tx-sender", "C000")
         self.assertEqual(code, 2)

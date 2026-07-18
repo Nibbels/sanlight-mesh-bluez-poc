@@ -17,7 +17,7 @@ Examples below use the illustrative unicast address `1234`. Replace it with an a
 | `availability`        |       yes | `online` or Last-Will `offline`                        |
 | `gateway/info`        |       yes | gateway, nodes, traffic policy and sequence budget     |
 | `nodes/<NODE>/meta`   |       yes | stable node metadata                                   |
-| `nodes/<NODE>/state`  |       yes | last verified MaxBrightness and live lamp-output state |
+| `nodes/<NODE>/state`  |       yes | verified lamp state and optional daylight configuration |
 | `command`             | **never** | ioBroker/client requests                               |
 | `result/<COMMAND_ID>` |        no | final result for one request ID                        |
 
@@ -69,6 +69,35 @@ gateway reads both configured MaxBrightness and `GetUptimeAndBrightness` live
 status. Refresh is read-only but normally sends at least two Mesh application
 queries per lamp, plus any bounded retries, so it still consumes Sequence
 Numbers.
+
+### Read stored daylight configuration
+
+```json
+{
+	"id": "read-daylight-1234-001",
+	"action": "read-daylight",
+	"target": "1234",
+	"createdAt": "2026-07-18T20:30:00Z",
+	"ttlSeconds": 60
+}
+```
+
+Use target `all` to query every detected SANlight lamp sequentially. This is a
+dedicated read operation: startup refresh and periodic refresh do not request
+daylight data. The CLI first sends the read-only vendor opcode `0x0E`
+(`GetCombinedDaylightData`). When no usable `0x0F` response is received, it
+falls back once to the narrower read-only opcode `0x03`
+(`GetDaylightConfiguration`) and expects `0x04`.
+
+The gateway never sends the daylight write opcode. It treats the complete raw
+PDU as authoritative. A currently recognized payload is exposed as structured
+data; an unknown or malformed payload is retained as raw hexadecimal with
+`parsed=false`, produces a `partial` result, and does not overwrite the last
+successfully parsed configuration.
+
+The gateway deliberately does not calculate photoperiod labels, on/off hours,
+growth phase, multi-lamp conflicts or farm policy. Those are client-side
+interpretations of the returned schedule.
 
 ### Set MaxBrightness
 
@@ -215,6 +244,12 @@ Important statuses include:
 
 When a completed QoS 1 command ID is delivered again, the gateway republishes the stored final result without a second Mesh transaction. The result details include `duplicateDelivery: true`.
 
+For `read-daylight`, `details.daylightReported` is keyed by lamp address. Each
+entry contains request/status opcodes, `rawPduHex`, `rawParametersHex`, a
+`parsed` flag, and—when the current conservative parser recognizes the
+payload—a `configuration` object. A target can therefore return useful raw
+evidence even when the overall command is `partial`.
+
 ## Node state example
 
 ```json
@@ -231,7 +266,32 @@ When a completed QoS 1 command ID is delivered again, the gateway republishes th
 	"lampClock": "17:01:05",
 	"liveBrightnessRaw": 461,
 	"liveBrightnessPercentEstimate": 46.1,
-	"liveVerifiedAt": "2026-07-16T20:30:05Z"
+	"liveVerifiedAt": "2026-07-16T20:30:05Z",
+	"daylightConfiguration": {
+		"verified": true,
+		"lastReadAt": "2026-07-18T20:30:05Z",
+		"lastReadOk": true,
+		"verifiedAt": "2026-07-18T20:30:05Z",
+		"requestOpcode": 3,
+		"requestOpcodeHex": "0x03",
+		"statusOpcode": 4,
+		"statusOpcodeHex": "0x04",
+		"rawPduHex": "c48b0a...",
+		"rawParametersHex": "...",
+		"parsed": true,
+		"parserLayout": "configuration-v1",
+		"configuration": {
+			"id": 7,
+			"name": "Flower 12/12",
+			"valueCount": 4,
+			"values": [
+				{ "timeInMinutes": 0, "time": "00:00", "brightness": 0 },
+				{ "timeInMinutes": 360, "time": "06:00", "brightness": 20 },
+				{ "timeInMinutes": 390, "time": "06:30", "brightness": 100 },
+				{ "timeInMinutes": 1080, "time": "18:00", "brightness": 0 }
+			]
+		}
+	}
 }
 ```
 
@@ -265,6 +325,14 @@ response and existing consumers remain compatible. User interfaces should
 normally display `liveBrightnessPercentEstimate`. A hardware comparison produced
 `33.4%` while the SANlight app showed the same value rounded to `34%`. The
 percentage is not calibrated watts, photon flux or PPFD.
+
+`daylightConfiguration.verified` means that a structurally validated parsed
+configuration is cached. `lastReadOk` describes only the newest read attempt.
+After a timeout or unknown response layout, the last verified configuration is
+preserved, `lastReadOk` becomes false, and `lastError` plus an optional
+`lastObservation` retain the newest diagnostic evidence. The value-list layout
+is explicitly provisional until compared with real lamp responses. Clients
+must retain support for `parsed=false` and raw-only data.
 
 ## Gateway information
 

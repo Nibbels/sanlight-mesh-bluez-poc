@@ -103,6 +103,13 @@ The additional `liveBrightnessPercentEstimate` is currently calculated as
 `liveBrightnessRaw / 10`. That scale is based on observed hardware behavior and
 must not be treated as calibrated power, photon flux or PPFD.
 
+The development branch also provides a separate, explicit daylight-profile
+read. It is intentionally not part of startup or periodic refresh. The gateway
+retains the complete vendor response, exposes a conservatively parsed
+configuration when the layout is recognized, and never sends a daylight write.
+Schedule interpretation belongs in MQTT clients such as the companion ioBroker
+adapter.
+
 The documented topology was validated end to end on real hardware from
 2026-07-16 through 2026-07-18, including installation, state adoption,
 read-only refresh, reversible brightness writes, retained-command rejection,

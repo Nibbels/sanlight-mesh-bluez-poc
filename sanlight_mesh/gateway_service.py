@@ -191,6 +191,32 @@ class SanlightMqttGateway:
                     "liveVerifiedAt": isoformat_utc(state.live_verified_at),
                 }
             )
+        if state.daylight_last_read_at is not None:
+            daylight: dict[str, Any] = {
+                "verified": state.daylight_status is not None,
+                "lastReadAt": isoformat_utc(state.daylight_last_read_at),
+                "lastReadOk": state.daylight_last_read_ok is True,
+            }
+            if (
+                state.daylight_status is not None
+                and state.daylight_verified_at is not None
+            ):
+                daylight.update(state.daylight_status.to_document())
+                daylight["verifiedAt"] = isoformat_utc(state.daylight_verified_at)
+            if state.daylight_last_observation is not None:
+                observation = state.daylight_last_observation
+                if state.daylight_status is None:
+                    # No validated configuration exists yet. Keep the latest raw
+                    # response directly visible for protocol investigation.
+                    daylight.update(observation.to_document())
+                elif (
+                    state.daylight_last_read_ok is not True
+                    or observation.raw_pdu != state.daylight_status.raw_pdu
+                ):
+                    daylight["lastObservation"] = observation.to_document()
+            if state.daylight_last_error is not None:
+                daylight["lastError"] = state.daylight_last_error
+            payload["daylightConfiguration"] = daylight
         self._require_transport().publish_json(
             self.node_state_topic(address), payload, retain=True
         )
@@ -258,6 +284,7 @@ class SanlightMqttGateway:
                     "address": address,
                     "name": name,
                     "writable": {"maxBrightness": {"minimum": 20, "maximum": 100}},
+                    "readable": {"daylightConfiguration": True},
                     "supportsExplicitBlackout": True,
                 },
                 retain=True,
@@ -504,6 +531,37 @@ class SanlightMqttGateway:
                     if address in self.nodes:
                         self.store.update_live(address, live_status)
                         addresses_to_publish.add(address)
+                daylight_now = utc_now()
+                for address, daylight_status in execution.daylight_reported.items():
+                    if address in self.nodes:
+                        self.store.update_daylight(
+                            address,
+                            daylight_status,
+                            now=daylight_now,
+                        )
+                        addresses_to_publish.add(address)
+
+                if command.action == "read-daylight":
+                    expected_daylight = (
+                        tuple(self.nodes)
+                        if command.target == "all"
+                        else (command.target,)
+                    )
+                    execution_errors = execution.details.get("errors", {})
+                    for address in expected_daylight:
+                        if address not in self.nodes or address in execution.daylight_reported:
+                            continue
+                        error = "no daylight status was returned"
+                        if isinstance(execution_errors, Mapping):
+                            candidate = execution_errors.get(address)
+                            if isinstance(candidate, str) and candidate:
+                                error = candidate
+                        self.store.record_daylight_failure(
+                            address,
+                            error,
+                            now=daylight_now,
+                        )
+                        addresses_to_publish.add(address)
 
                 if command.action == "refresh":
                     expected_live = (
@@ -553,6 +611,10 @@ class SanlightMqttGateway:
                     }
                     for address, status in execution.live_reported.items()
                 }
+                daylight_reported = {
+                    address: status.to_document()
+                    for address, status in execution.daylight_reported.items()
+                }
                 result = make_result(
                     command,
                     ok=execution.ok,
@@ -561,6 +623,11 @@ class SanlightMqttGateway:
                     details={
                         "reported": dict(execution.reported),
                         **({"liveReported": live_reported} if live_reported else {}),
+                        **(
+                            {"daylightReported": daylight_reported}
+                            if daylight_reported
+                            else {}
+                        ),
                         **dict(execution.details),
                     },
                 )

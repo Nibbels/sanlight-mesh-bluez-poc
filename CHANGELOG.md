@@ -4,6 +4,12 @@ All notable changes to this community project are documented here. The project i
 
 ## Unreleased
 
+- Add a dedicated read-only `read-daylight` MQTT action and `get-daylight` CLI command for one lamp or all detected lamps without extending normal refresh.
+- Query combined daylight data first and fall back once to the configuration-only read, with strict source, destination, AppKey and request/status-opcode correlation.
+- Preserve complete raw daylight status PDUs, expose conservatively parsed configuration IDs, names and ordered time/brightness values, and keep the last verified configuration when a later read fails or has an unknown layout.
+- Publish optional retained `daylightConfiguration` node state and structured per-node command results while deliberately leaving photoperiod and farm-policy interpretation to MQTT clients.
+- Add offline protocol, executor, persistence, service, schema and command-validation coverage for the daylight reader.
+
 ## 0.3.0 - 2026-07-18
 
 - Add explicit MQTT clock controls for one lamp or all lamps: `sync-clock`, `set-clock` and the Mesh-free `refresh-gateway-info` action.

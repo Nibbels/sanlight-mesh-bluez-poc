@@ -124,6 +124,7 @@ def decode_command(payload: bytes, *, now: datetime | None = None) -> GatewayCom
     actions = {
         "set-max",
         "refresh",
+        "read-daylight",
         "blackout",
         "restore-blackout",
         "sync-clock",
@@ -157,7 +158,7 @@ def decode_command(payload: bytes, *, now: datetime | None = None) -> GatewayCom
             raise GatewayProtocolError("set-max value must be between 20 and 100")
         value = raw_value
         _forbid(document, action, "confirmed", "secondsSinceMidnight")
-    elif action == "refresh":
+    elif action in {"refresh", "read-daylight"}:
         target = normalize_node(document.get("target", "all"), allow_all=True)
         _forbid(document, action, "value", "confirmed", "secondsSinceMidnight")
     elif action == "blackout":

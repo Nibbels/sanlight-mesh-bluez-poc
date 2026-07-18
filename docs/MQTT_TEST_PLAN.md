@@ -57,6 +57,31 @@ intentionally omitted.
 The addresses, labels and percentages above are facts about the reference Mesh,
 not generic defaults.
 
+## Planned daylight-configuration validation for v0.4.0
+
+The first daylight reader is read-only and must be validated before its parsed
+layout is considered hardware-confirmed.
+
+Run the following compact matrix on the gateway Pi and through MQTT:
+
+1. Query one lamp with the direct `get-daylight` CLI and retain the complete
+   stdout, status opcode and raw PDU.
+2. Compare the parsed ID, name and ordered values with the SANlight app. When
+   parsing is raw-only, use the captured bytes to refine fixtures without
+   sending a daylight write.
+3. Repeat the same lamp read and confirm a stable configuration and fresh read
+   timestamp.
+4. Query `all` and confirm independent per-node results, including a partial or
+   unavailable-node case.
+5. Confirm that normal refresh remains unchanged and never reads daylight data.
+6. Power-cycle one lamp where useful, restore its clock separately, and verify
+   whether the stored daylight configuration persists unchanged.
+7. Confirm in the SANlight app that every read left the profile name and curve
+   unchanged.
+
+Malformed, truncated and unexpected layouts are covered with offline fixtures;
+do not intentionally send malformed or daylight-write PDUs to real lamps.
+
 ## Live-output validation procedure
 
 The initial scale comparison is complete: the gateway percentage matched the

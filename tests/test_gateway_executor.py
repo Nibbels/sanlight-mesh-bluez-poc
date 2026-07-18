@@ -1,9 +1,41 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
+from sanlight_mesh.constants import SANLIGHT_GET_DAYLIGHT_CONFIGURATION_OPCODE
 from sanlight_mesh.gateway_config import GatewayConfig, MqttConfig
 from sanlight_mesh.gateway_executor import CliCommandExecutor, ProcessResult
+from sanlight_mesh.protocol import decode_daylight_status_pdu
+
+
+def daylight_pdu(address_seed=2):
+    values = ((0, 0), (360, 20), (1080, 0))
+    parameters = (
+        address_seed.to_bytes(4, "little")
+        + bytes((len(values),))
+        + b"".join(
+            minute.to_bytes(2, "little") + bytes((brightness,))
+            for minute, brightness in values
+        )
+        + b"Flower\x00"
+    )
+    return bytes.fromhex("c48b0a") + parameters
+
+
+def daylight_stdout(address, pdu, *, verified):
+    status = decode_daylight_status_pdu(
+        pdu,
+        request_opcode=SANLIGHT_GET_DAYLIGHT_CONFIGURATION_OPCODE,
+    )
+    document = {
+        "address": address,
+        "verified": verified,
+        **status.to_document(),
+    }
+    return "GET-DAYLIGHT COMPLETE. " + json.dumps(
+        document, separators=(",", ":")
+    )
 
 
 class GatewayExecutorTest(unittest.TestCase):
@@ -55,3 +87,52 @@ class GatewayExecutorTest(unittest.TestCase):
             argv = executor._base_argv()
             self.assertEqual(argv[1], str(root / "sanlight_canonical_sender_poc.py"))
             self.assertNotIn("shell", " ".join(argv).lower())
+
+    def test_get_daylight_parser_redecodes_raw_pdu(self):
+        pdu = daylight_pdu()
+        parsed = CliCommandExecutor._parse_get_daylight(
+            ProcessResult(0, daylight_stdout("0002", pdu, verified=True), "")
+        )
+        self.assertIsNotNone(parsed)
+        address, status = parsed
+        self.assertEqual(address, "0002")
+        self.assertTrue(status.parsed)
+        self.assertEqual(status.configuration.name, "Flower")
+
+    def test_get_daylight_parser_rejects_untrusted_verified_flag(self):
+        pdu = daylight_pdu()
+        self.assertIsNone(
+            CliCommandExecutor._parse_get_daylight(
+                ProcessResult(0, daylight_stdout("0002", pdu, verified=False), "")
+            )
+        )
+
+    def test_read_daylight_retains_raw_only_responses(self):
+        class StubExecutor(CliCommandExecutor):
+            def _run(self, arguments, timeout=None):
+                address = arguments[1]
+                if address == "0002":
+                    pdu = daylight_pdu(2)
+                    return ProcessResult(
+                        0,
+                        daylight_stdout(address, pdu, verified=True),
+                        "",
+                    )
+                raw = bytes.fromhex("c48b0a0000")
+                return ProcessResult(
+                    3,
+                    daylight_stdout(address, raw, verified=False),
+                    "",
+                )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            executor = StubExecutor(self.config(root), ["0002", "0003"])
+            result = executor.read_daylight("all")
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.status, "partial")
+        self.assertEqual(set(result.daylight_reported), {"0002", "0003"})
+        self.assertTrue(result.daylight_reported["0002"].parsed)
+        self.assertFalse(result.daylight_reported["0003"].parsed)
+        self.assertIn("0003", result.details["errors"])

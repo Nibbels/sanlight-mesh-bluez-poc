@@ -11,6 +11,7 @@
       "enum": [
         "set-max",
         "refresh",
+        "read-daylight",
         "blackout",
         "restore-blackout",
         "sync-clock",
@@ -40,6 +41,20 @@
     {
       "if": {"properties": {"action": {"const": "refresh"}}},
       "then": {
+        "not": {
+          "anyOf": [
+            {"required": ["value"]},
+            {"required": ["confirmed"]},
+            {"required": ["secondsSinceMidnight"]}
+          ]
+        },
+        "properties": {"target": {"pattern": "^(all|[0-9A-Fa-f]{4})$"}}
+      }
+    },
+    {
+      "if": {"properties": {"action": {"const": "read-daylight"}}},
+      "then": {
+        "required": ["target"],
         "not": {
           "anyOf": [
             {"required": ["value"]},
