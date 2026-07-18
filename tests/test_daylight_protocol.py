@@ -104,6 +104,88 @@ class DaylightProtocolTest(unittest.TestCase):
         self.assertEqual(document["combinedStatus"]["lampClock"], "16:10:44.791")
         self.assertEqual(document["combinedStatus"]["maxBrightness"], 30)
 
+    def test_combined_status_decodes_real_18_hour_light_profile(self):
+        pdu = bytes.fromhex(
+            "cf8b0a"
+            "ed8ab503"  # lamp clock: 62,229,229 ms
+            "2c01"      # live brightness raw: 300 => 30.0%
+            "1e"        # MaxBrightness: 30%
+            "d487a517"  # configuration id: 396,724,180
+            "07"
+            "000000"
+            "680100"
+            "690114"
+            "860164"
+            "820564"
+            "9e0514"
+            "a00500"
+            "3130302520363a313800"
+        )
+        status = decode_daylight_status_pdu(
+            pdu,
+            request_opcode=SANLIGHT_GET_COMBINED_DAYLIGHT_DATA_OPCODE,
+        )
+
+        self.assertTrue(status.parsed)
+        self.assertEqual(status.parser_layout, "combined-live-max-prefix-v1")
+        self.assertEqual(status.configuration.configuration_id, 396_724_180)
+        self.assertEqual(status.configuration.name, "100% 6:18")
+        self.assertEqual(
+            [
+                (value.time_in_minutes, value.brightness)
+                for value in status.configuration.values
+            ],
+            [
+                (0, 0),
+                (360, 0),
+                (361, 20),
+                (390, 100),
+                (1410, 100),
+                (1438, 20),
+                (1440, 0),
+            ],
+        )
+        document = status.to_document()
+        self.assertEqual(document["combinedStatus"]["lampClock"], "17:17:09.229")
+        self.assertEqual(document["combinedStatus"]["liveBrightnessRaw"], 300)
+        self.assertEqual(document["combinedStatus"]["maxBrightness"], 30)
+
+    def test_combined_status_decodes_real_always_dark_profile(self):
+        pdu = bytes.fromhex(
+            "cf8b0a"
+            "f37eb603"  # lamp clock: 62,291,699 ms
+            "0000"      # live brightness raw: 0
+            "1e"        # MaxBrightness: 30%
+            "cc82b64d"  # configuration id: 1,303,806,668
+            "02"
+            "000000"
+            "a00500"
+            "4162736f6c75742044756e6b656c00"
+        )
+        status = decode_daylight_status_pdu(
+            pdu,
+            request_opcode=SANLIGHT_GET_COMBINED_DAYLIGHT_DATA_OPCODE,
+        )
+
+        self.assertTrue(status.parsed)
+        self.assertEqual(status.parser_layout, "combined-live-max-prefix-v1")
+        self.assertEqual(status.configuration.configuration_id, 1_303_806_668)
+        self.assertEqual(status.configuration.name, "Absolut Dunkel")
+        self.assertEqual(
+            [
+                (value.time_in_minutes, value.brightness)
+                for value in status.configuration.values
+            ],
+            [(0, 0), (1440, 0)],
+        )
+        document = status.to_document()
+        self.assertEqual(document["combinedStatus"]["lampClock"], "17:18:11.699")
+        self.assertEqual(document["combinedStatus"]["liveBrightnessRaw"], 0)
+        self.assertEqual(
+            document["combinedStatus"]["liveBrightnessPercentEstimate"], 0.0
+        )
+        self.assertEqual(document["combinedStatus"]["maxBrightness"], 30)
+
     def test_unconfirmed_combined_layout_remains_raw_only(self):
         pdu = bytes.fromhex("cf8b0a") + daylight_parameters()
         status = decode_daylight_status_pdu(

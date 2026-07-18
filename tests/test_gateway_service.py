@@ -20,8 +20,12 @@ FIXTURE = Path(__file__).parent / "fixtures" / "sample_cdb.json"
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def daylight_status(configuration_id=7):
-    values = ((0, 0), (360, 20), (1080, 0))
+def daylight_status(
+    configuration_id=7,
+    *,
+    name="Flower 12/12",
+    values=((0, 0), (360, 20), (1080, 0)),
+):
     parameters = (
         configuration_id.to_bytes(4, "little")
         + bytes((len(values),))
@@ -29,7 +33,8 @@ def daylight_status(configuration_id=7):
             minute.to_bytes(2, "little") + bytes((brightness,))
             for minute, brightness in values
         )
-        + b"Flower 12/12\x00"
+        + name.encode("utf-8")
+        + b"\x00"
     )
     return decode_daylight_status_pdu(
         bytes.fromhex("c48b0a") + parameters,
@@ -82,6 +87,49 @@ class FakeExecutor:
 
     def sender_sequence_state(self):
         return {"sequenceNumber": 100, "sequenceRemaining": 16777115}
+
+
+class MixedDaylightExecutor(FakeExecutor):
+    def execute(self, command):
+        if command.action != "read-daylight" or command.target != "all":
+            return super().execute(command)
+        self.commands.append(command)
+        return ExecutionResult(
+            ok=True,
+            status="verified",
+            message="daylight verified",
+            reported={},
+            daylight_reported={
+                "0002": daylight_status(
+                    396_724_180,
+                    name="100% 6:18",
+                    values=(
+                        (0, 0),
+                        (360, 0),
+                        (361, 20),
+                        (390, 100),
+                        (1410, 100),
+                        (1438, 20),
+                        (1440, 0),
+                    ),
+                ),
+                "0003": daylight_status(
+                    947_599_001,
+                    name="100% 12:12",
+                    values=(
+                        (0, 0),
+                        (359, 0),
+                        (360, 20),
+                        (390, 100),
+                        (1050, 100),
+                        (1080, 20),
+                        (1081, 0),
+                        (1440, 0),
+                    ),
+                ),
+            },
+            details={},
+        )
 
 
 class GatewayServiceTest(unittest.TestCase):
@@ -227,6 +275,60 @@ class GatewayServiceTest(unittest.TestCase):
                     if topic.endswith("/result/cmd-1")
                 ]
                 self.assertTrue(duplicate_results[-1]["details"]["duplicateDelivery"])
+            finally:
+                gateway.stop()
+
+    def test_all_lamp_daylight_read_accepts_different_valid_profiles(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            gateway, transport = self.make_gateway(tmp)
+            gateway.executor = MixedDaylightExecutor()
+            try:
+                gateway.store.update_node("0002", 30)
+                gateway.store.update_node("0003", 30)
+                now = datetime.now(timezone.utc)
+                payload = json.dumps(
+                    {
+                        "id": "daylight-mixed",
+                        "action": "read-daylight",
+                        "target": "all",
+                        "createdAt": isoformat_utc(now),
+                        "ttlSeconds": 30,
+                    }
+                ).encode()
+                gateway.on_message(
+                    IncomingMessage(gateway.config.command_topic, payload, 1, False)
+                )
+
+                result = self.wait_for_result(transport, "daylight-mixed")
+                self.assertTrue(result["ok"])
+                self.assertEqual(result["status"], "verified")
+                reported = result["details"]["daylightReported"]
+                self.assertEqual(
+                    reported["0002"]["configuration"]["name"], "100% 6:18"
+                )
+                self.assertEqual(
+                    reported["0003"]["configuration"]["name"], "100% 12:12"
+                )
+                self.assertNotEqual(
+                    reported["0002"]["configuration"],
+                    reported["0003"]["configuration"],
+                )
+
+                retained = {
+                    topic.rsplit("/", 2)[-2]: message["daylightConfiguration"]
+                    for topic, message, is_retained in transport.json_messages
+                    if is_retained
+                    and topic.endswith("/state")
+                    and "daylightConfiguration" in message
+                }
+                self.assertEqual(
+                    retained["0002"]["configuration"]["name"], "100% 6:18"
+                )
+                self.assertEqual(
+                    retained["0003"]["configuration"]["name"], "100% 12:12"
+                )
+                self.assertTrue(retained["0002"]["verified"])
+                self.assertTrue(retained["0003"]["verified"])
             finally:
                 gateway.stop()
 
