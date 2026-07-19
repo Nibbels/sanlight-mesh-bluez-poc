@@ -103,21 +103,22 @@ The additional `liveBrightnessPercentEstimate` is currently calculated as
 `liveBrightnessRaw / 10`. That scale is based on observed hardware behavior and
 must not be treated as calibrated power, photon flux or PPFD.
 
-The development branch also provides a separate, explicit daylight-profile
-read. It is intentionally not part of startup or periodic refresh. The gateway
+Version `0.4.0` adds a separate, explicit daylight-profile read. It is
+intentionally not part of startup or periodic refresh. The gateway
 retains the complete vendor response, exposes a conservatively parsed
 configuration when the layout is recognized, and never sends a daylight write.
 Schedule interpretation belongs in MQTT clients such as the companion ioBroker
 adapter.
 
 The documented topology was validated end to end on real hardware from
-2026-07-16 through 2026-07-18, including installation, state adoption,
+2026-07-16 through 2026-07-19, including installation, state adoption,
 read-only refresh, reversible brightness writes, retained-command rejection,
-deduplication, expiry, coalescing, rate limiting, restart recovery and the
-manual lamp-clock workflow. See [docs/MQTT_TEST_PLAN.md](docs/MQTT_TEST_PLAN.md)
+deduplication, expiry, coalescing, rate limiting, restart recovery, manual
+lamp-clock control and stored daylight-profile reads. See
+[docs/MQTT_TEST_PLAN.md](docs/MQTT_TEST_PLAN.md)
 for the detailed record.
 
-Version `0.3.0` is the current immutable release. The project remains pre-1.0,
+Version `0.4.0` is the current immutable release. The project remains pre-1.0,
 so coordinated compatibility changes are documented explicitly in both
 repositories.
 

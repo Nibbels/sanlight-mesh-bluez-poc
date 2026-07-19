@@ -57,40 +57,30 @@ intentionally omitted.
 The addresses, labels and percentages above are facts about the reference Mesh,
 not generic defaults.
 
-## Planned daylight-configuration validation for v0.4.0
+## Daylight-configuration validation for v0.4.0
 
-The first daylight reader is read-only and must be validated before its parsed
-layout is considered hardware-confirmed.
-
-Run the following compact matrix on the gateway Pi and through MQTT:
-
-1. Query one lamp with the direct `get-daylight` CLI and retain the complete
-   stdout, status opcode and raw PDU.
-2. Compare the parsed ID, name and ordered values with the SANlight app. When
-   parsing is raw-only, use the captured bytes to refine fixtures without
-   sending a daylight write.
-3. Repeat the same lamp read and confirm a stable configuration and fresh read
-   timestamp.
-4. Query `all` and confirm independent per-node results, including a partial or
-   unavailable-node case.
-5. Confirm that normal refresh remains unchanged and never reads daylight data.
-6. Power-cycle one lamp where useful, restore its clock separately, and verify
-   whether the stored daylight configuration persists unchanged.
-7. Confirm in the SANlight app that every read left the profile name and curve
-   unchanged.
-
+The daylight reader is a dedicated read-only operation. It is not part of
+startup or periodic refresh, and no daylight write opcode is implemented.
 Malformed, truncated and unexpected layouts are covered with offline fixtures;
 do not intentionally send malformed or daylight-write PDUs to real lamps.
 
-### Initial direct hardware validation — 2026-07-18
+### Completed protocol and hardware validation — 2026-07-18/19
 
-The direct `get-daylight` command was run against both reference lamps. Both
-returned the same configuration ID, the profile name `100% 12:12`, and eight
-ordered values matching a 06:00–18:00 profile with 30-minute ramps. The
-configuration-only `0x04` layout matched the initial parser hypothesis exactly.
+The direct `get-daylight` command and MQTT `read-daylight` action were exercised
+against both reference lamps. The configuration-only `0x04` payload confirmed
+this structure:
 
-The combined `0x0F` response was also captured and confirms this prefix before
-the same configuration object:
+```text
+uint32_le configuration ID
+uint8     value count
+repeated:
+  uint16_le minute of day
+  uint8     brightness percentage
+UTF-8 profile name terminated by NUL
+```
+
+The combined `0x0F` response confirmed this prefix before the same configuration
+object:
 
 ```text
 uint32_le lamp time in milliseconds
@@ -98,12 +88,24 @@ uint16_le live brightness raw value (percentage × 10)
 uint8     MaxBrightness percentage
 ```
 
-For the captured run, both lamps reported live brightness raw `300` and
-MaxBrightness `30`. The second parser revision therefore consumes the combined
-response directly and retains the `0x03` fallback only for unknown firmware
-layouts or missing `0x0F` responses. No daylight write was sent. Repeated reads,
-MQTT `all`, unavailable-node behavior and profile persistence remain to be
-validated.
+The completed run confirmed:
+
+- repeated combined `0x0F` reads without fallback on both lamps;
+- matching 12:12 profiles with eight ordered values and 30-minute ramps;
+- a seven-value 18:6 profile stored on one lamp while the other retained 12:12;
+- a two-value all-dark profile from `00:00` to `24:00` on both lamps;
+- verified MQTT `target: "all"` results and matching retained per-node state;
+- valid mixed profiles remaining a successful gateway operation rather than a
+  transport error;
+- complete raw PDU and parameter retention alongside parsed configuration data;
+- gateway service health and a clean worktree after repeated reads; and
+- no daylight write operation or profile modification by the gateway.
+
+The final gateway suite contains 164 offline tests, including real captured
+12:12, 18:6 and all-dark response fixtures. Timeout, malformed-response and
+last-known-good persistence behavior are covered offline. A deliberate physical
+unavailable-lamp test was deferred because it would duplicate the later
+coordinated adapter test and is not required to validate the read-only parser.
 
 ## Live-output validation procedure
 
