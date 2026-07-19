@@ -20,6 +20,20 @@ The default installation uses authenticated MQTT without TLS on port `1883`.
 Use it only on a trusted private LAN or VLAN. Do not expose the port to the
 internet.
 
+Before copying the export into the repository, keep an untouched offline backup
+of the original `SANlightMesh.json`. The gateway copy is operational material,
+not the only recovery copy.
+
+When updating, migrating or recovering an existing gateway, also back up its
+protected configuration, BlueZ Mesh identity database and gateway state before
+making changes. Do not copy one active sender identity onto multiple running
+gateways.
+
+Incorrect configuration or automation can change lamp brightness or lighting
+periods. Start with the documented read-only checks, use small reversible
+changes and verify writes independently. Installation and automation remain the
+operator's responsibility.
+
 ## 1. Clone the repository
 
 On the SANlight gateway Pi:

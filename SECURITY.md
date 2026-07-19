@@ -83,6 +83,16 @@ Do not claim that a dedicated unprivileged gateway service account is supported
 until its D-Bus policy, CDB access, sequence-state ownership, install, upgrade
 and recovery paths have been validated on the target Raspberry Pi.
 
+## Project support
+
+Normal installation questions, defect reports and compatibility findings belong
+in the
+[central community support thread](https://github.com/Nibbels/ioBroker.sanlightmesh/issues/1).
+Do not include credentials, Mesh keys or private exports there.
+
+This gateway and the companion adapter are independent community software.
+Please do not ask SANlight product support to troubleshoot them.
+
 ## Reporting a vulnerability
 
 Open a private GitHub security advisory when available or contact the maintainer

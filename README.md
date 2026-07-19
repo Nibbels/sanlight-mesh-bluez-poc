@@ -13,6 +13,19 @@ adapter connects over the local network. Mesh keys never leave the gateway Pi.
 > name `SANlight` is used only to identify compatible products, the official app
 > and the associated Mesh network.
 
+## Community support
+
+This gateway and the companion adapter are maintained by
+[Nibbels](https://github.com/Nibbels) as independent community software.
+Questions, defect reports and compatibility findings should go to the
+[central community support thread](https://github.com/Nibbels/ioBroker.sanlightmesh/issues/1).
+
+Please do not ask SANlight product support to troubleshoot this gateway or the
+ioBroker adapter. These components are not SANlight products; installation,
+operation and troubleshooting are handled through the community project.
+Security-sensitive findings should follow
+[SECURITY.md](SECURITY.md).
+
 ## Architecture
 
 ```text
@@ -40,6 +53,18 @@ stable LAN IP address or hostname of the gateway Pi.
 - ioBroker or another MQTT API v1 client on the same trusted LAN
 
 Do not expose MQTT port `1883` to the internet.
+
+## Before installation
+
+Keep an untouched offline backup of the original `SANlightMesh.json` outside
+this repository before creating the operational copy used by the gateway.
+Existing gateway installations should also back up their protected BlueZ Mesh,
+configuration and gateway state before migration or recovery work.
+
+Incorrect configuration or automation can change lamp brightness or lighting
+periods. Begin with read-only verification, make only small reversible changes
+and confirm writes independently. Installation and automation remain the
+operator's responsibility.
 
 ## Quick start
 
@@ -148,6 +173,8 @@ an explicit synchronization restored local time. See
 - [docs/MQTT_API.md](docs/MQTT_API.md) — MQTT API v1 contract
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — component and repository boundaries
 - [SECURITY.md](SECURITY.md) — secrets and network-security boundaries
+- [docs/ASSET_NOTICES.md](docs/ASSET_NOTICES.md) — documentation-image provenance
+- [docs/HISTORY_AUDIT.md](docs/HISTORY_AUDIT.md) — maintainer history and release audit
 - [CHANGELOG.md](CHANGELOG.md) — notable changes
 
 Implementation and maintainer references remain in the repository, but are not required for installation or normal operation.
